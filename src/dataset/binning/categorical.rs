@@ -4,7 +4,7 @@
 //! frequency-based ordering and rare category handling.
 
 use crate::core::error::{LightGBMError, Result};
-use crate::dataset::binning::{BinMapper, BinType, BinningConfig, MissingType};
+use crate::dataset::binning::{BinMapper, BinningConfig, MissingType};
 use ndarray::ArrayView1;
 use std::collections::HashMap;
 
@@ -46,7 +46,7 @@ impl CategoricalBinner {
     }
 
     /// Fit the binner on categorical feature data
-    pub fn fit(&self, values: &ArrayView1<f32>) -> Result<(BinMapper, MissingType)> {
+    pub fn fit(&self, values: &ArrayView1<'_, f32>) -> Result<(BinMapper, MissingType)> {
         let values_slice = values
             .as_slice()
             .ok_or_else(|| LightGBMError::dataset("Cannot get slice from array view"))?;

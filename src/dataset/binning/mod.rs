@@ -16,9 +16,8 @@ pub use categorical::CategoricalBinner;
 use crate::core::types::*;
 use crate::core::error::{Result, LightGBMError};
 use crate::core::constants::*;
-use ndarray::{Array1, Array2, ArrayView1};
+use ndarray::Array2;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Feature binner that handles both numerical and categorical features
 pub struct FeatureBinner {

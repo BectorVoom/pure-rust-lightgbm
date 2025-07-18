@@ -3,11 +3,9 @@
 //! This module provides specialized binning for numerical features using
 //! various strategies like uniform, quantile, and adaptive binning.
 
-use crate::core::types::*;
 use crate::core::error::{Result, LightGBMError};
-use crate::dataset::binning::{BinMapper, BinType, MissingType, MissingHandling, BinningStrategy, BinningConfig};
+use crate::dataset::binning::{BinMapper, MissingType, BinningStrategy, BinningConfig};
 use ndarray::ArrayView1;
-use std::collections::HashMap;
 
 /// Numerical feature binner
 pub struct NumericalBinner {
@@ -54,7 +52,7 @@ impl NumericalBinner {
     }
     
     /// Fit the binner on numerical feature data
-    pub fn fit(&self, values: &ArrayView1<f32>) -> Result<(BinMapper, MissingType)> {
+    pub fn fit(&self, values: &ArrayView1<'_, f32>) -> Result<(BinMapper, MissingType)> {
         let values_slice = values.as_slice()
             .ok_or_else(|| LightGBMError::dataset("Cannot get slice from array view"))?;
         

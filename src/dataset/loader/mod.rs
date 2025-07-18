@@ -457,13 +457,13 @@ impl PolarsLoader {
     }
     
     /// Load CSV file using Polars (much faster than standard CSV loader)
-    pub fn load_csv<P: AsRef<Path>>(&self, path: P) -> Result<Dataset> {
+    pub fn load_csv<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
         // TODO: Fix polars API compatibility
         Err(LightGBMError::not_implemented("Polars CSV loading temporarily disabled"))
     }
     
     /// Load Parquet file using Polars
-    pub fn load_parquet<P: AsRef<Path>>(&self, path: P) -> Result<Dataset> {
+    pub fn load_parquet<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
         // TODO: Fix polars API compatibility
         Err(LightGBMError::not_implemented("Polars Parquet loading temporarily disabled"))
     }

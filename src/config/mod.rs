@@ -158,9 +158,15 @@ impl ConfigManager {
     
     /// Update configuration with new values
     pub fn update(&mut self, new_config: Config) -> Result<()> {
+        // Validate the new configuration first, before updating state
+        new_config.validate()?;
+        
+        // Only update state if validation passes
         self.config = new_config;
         self.source = ConfigSource::Programmatic;
-        self.validate()
+        self.validation_results.clear(); // Clear previous validation results
+        
+        Ok(())
     }
     
     /// Merge configuration with another configuration

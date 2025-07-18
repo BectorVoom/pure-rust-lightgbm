@@ -199,7 +199,7 @@ impl Dataset {
     }
 
     /// Get feature matrix view
-    pub fn features(&self) -> ArrayView2<f32> {
+    pub fn features(&self) -> ArrayView2<'_, f32> {
         self.features.view()
     }
 
@@ -209,7 +209,7 @@ impl Dataset {
     }
 
     /// Get labels view
-    pub fn labels(&self) -> ArrayView1<f32> {
+    pub fn labels(&self) -> ArrayView1<'_, f32> {
         self.labels.view()
     }
 
@@ -221,7 +221,7 @@ impl Dataset {
     }
 
     /// Get weights view
-    pub fn weights(&self) -> Option<ArrayView1<f32>> {
+    pub fn weights(&self) -> Option<ArrayView1<'_, f32>> {
         self.weights.as_ref().map(|w| w.view())
     }
 
@@ -247,7 +247,7 @@ impl Dataset {
     }
 
     /// Get groups view
-    pub fn groups(&self) -> Option<ArrayView1<DataSize>> {
+    pub fn groups(&self) -> Option<ArrayView1<'_, DataSize>> {
         self.groups.as_ref().map(|g| g.view())
     }
 
@@ -307,7 +307,7 @@ impl Dataset {
     }
 
     /// Get missing values matrix
-    pub fn missing_values(&self) -> Option<ArrayView2<bool>> {
+    pub fn missing_values(&self) -> Option<ArrayView2<'_, bool>> {
         self.missing_values.as_ref().map(|mv| mv.view())
     }
 
