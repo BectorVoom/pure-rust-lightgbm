@@ -1,0 +1,100 @@
+[package]
+name = "lightgbm-rust"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pure Rust LightGBM Contributors"]
+description = "A pure Rust implementation of LightGBM gradient boosting framework"
+repository = "https://github.com/rust-lightgbm/lightgbm-rust"
+license = "MIT OR Apache-2.0"
+keywords = ["machine-learning", "gradient-boosting", "lightgbm", "gbdt", "ml"]
+categories = ["algorithms", "science", "mathematics"]
+readme = "README.md"
+rust-version = "1.75"
+
+[workspace]
+members = [
+    "."
+]
+
+[features]
+default = ["cpu", "polars", "csv"]
+cpu = []
+gpu = ["cubecl"]
+async = ["tokio"]
+python = ["pyo3"]
+full = ["cpu", "gpu", "async", "python", "polars", "csv"]
+
+[dependencies]
+# Core numerical computing
+ndarray = { version = "0.16.1", features = ["rayon", "serde"] }
+num-traits = "0.2.19"
+num_cpus = "1.17.0"
+
+# Parallel processing
+rayon = "1.10.0"
+
+# GPU acceleration (optional)
+cubecl = { version = "0.5", features = ["cuda", "wgpu"], optional = true }
+
+# DataFrame support
+polars = { version = "0.49.1", features = ["lazy", "csv", "parquet"], optional = true }
+
+# CSV processing
+csv = { version = "1.3.1", optional = true }
+
+# Error handling
+anyhow = "1.0.98"
+thiserror = "2.0.12"
+
+# Logging
+log = "0.4.27"
+env_logger = "0.11.8"
+
+# Serialization
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+toml = "0.8"
+
+# Compile-time checks
+static_assertions = "1.1"
+
+# Random number generation
+rand = "0.8"
+
+# Date and time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async support (optional)
+tokio = { version = "1.0", features = ["full"], optional = true }
+
+# Python bindings (optional)
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+tempfile = "3.8"
+approx = "0.5"
+
+[build-dependencies]
+cc = "1.0"
+
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+
+[profile.bench]
+debug = true
+opt-level = 3
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "lightgbm_rust"
+crate-type = ["lib", "cdylib"]

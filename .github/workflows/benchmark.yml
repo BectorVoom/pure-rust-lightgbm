@@ -1,0 +1,221 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    # Run benchmarks weekly on Sundays at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch full history for comparison
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: benchmark-${{ runner.os }}
+
+    - name: Install criterion dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gnuplot
+
+    - name: Run benchmarks
+      run: cargo bench --all-features -- --output-format html
+
+    - name: Store benchmark results
+      uses: benchmark-action/github-action-benchmark@v1
+      if: github.event_name != 'pull_request'
+      with:
+        tool: 'cargo'
+        output-file-path: target/criterion/reports/index.html
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        auto-push: true
+        # Show alert with commit comment on detecting possible performance regression
+        alert-threshold: '200%'
+        comment-on-alert: true
+        fail-on-alert: false
+
+    - name: Run benchmark comparison (PR only)
+      if: github.event_name == 'pull_request'
+      run: |
+        echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+        echo "Benchmark comparison for PR #${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Run benchmarks and capture output
+        cargo bench --all-features > benchmark_output.txt 2>&1
+        
+        echo "### Current Benchmark Results" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        tail -50 benchmark_output.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload benchmark artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-${{ github.sha }}
+        path: |
+          target/criterion/
+          *.txt
+        retention-days: 30
+
+  memory-benchmarks:
+    name: Memory Usage Benchmarks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install memory profiling tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y valgrind
+
+    - name: Build release
+      run: cargo build --release --all-features
+
+    - name: Run memory benchmarks
+      run: |
+        echo "## Memory Usage Analysis" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Run with valgrind to check for memory leaks
+        if [ -f "target/release/lightgbm_rust" ]; then
+          echo "### Memory Leak Check" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --track-origins=yes target/release/lightgbm_rust 2>&1 | head -50 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Check binary size
+        echo "### Binary Size Analysis" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        ls -lh target/release/deps/lightgbm_rust* 2>/dev/null | head -10 >> $GITHUB_STEP_SUMMARY || echo "No binary found" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+  performance-regression:
+    name: Performance Regression Detection
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout PR
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run PR benchmarks
+      run: |
+        cargo bench --all-features > pr_benchmarks.txt 2>&1
+        echo "PR benchmarks completed"
+
+    - name: Checkout base branch
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.base.sha }}
+        clean: false
+
+    - name: Run base benchmarks
+      run: |
+        cargo bench --all-features > base_benchmarks.txt 2>&1
+        echo "Base benchmarks completed"
+
+    - name: Install benchmark comparison tool
+      run: cargo install cargo-criterion
+
+    - name: Compare benchmark results
+      run: |
+        echo "## Performance Comparison" >> $GITHUB_STEP_SUMMARY
+        echo "Comparing PR performance against base branch" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### Performance Summary" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "Base branch results:" >> $GITHUB_STEP_SUMMARY
+        grep -E "(time:|fastest)" base_benchmarks.txt | head -20 >> $GITHUB_STEP_SUMMARY || echo "No base results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "PR branch results:" >> $GITHUB_STEP_SUMMARY
+        grep -E "(time:|fastest)" pr_benchmarks.txt | head -20 >> $GITHUB_STEP_SUMMARY || echo "No PR results" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload comparison results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-comparison-${{ github.event.pull_request.number }}
+        path: |
+          pr_benchmarks.txt
+          base_benchmarks.txt
+        retention-days: 14
+
+  benchmark-documentation:
+    name: Generate Benchmark Documentation
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Generate benchmark documentation
+      run: |
+        cargo bench --all-features
+        
+        # Create benchmark documentation
+        mkdir -p docs/benchmarks
+        echo "# Performance Benchmarks" > docs/benchmarks/README.md
+        echo "" >> docs/benchmarks/README.md
+        echo "Last updated: $(date)" >> docs/benchmarks/README.md
+        echo "" >> docs/benchmarks/README.md
+        echo "## Benchmark Results" >> docs/benchmarks/README.md
+        echo "" >> docs/benchmarks/README.md
+        
+        # Copy criterion reports
+        if [ -d "target/criterion" ]; then
+          cp -r target/criterion/* docs/benchmarks/ || true
+        fi
+
+    - name: Deploy benchmark documentation
+      uses: peaceiris/actions-gh-pages@v4
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./docs/benchmarks
+        destination_dir: benchmarks
