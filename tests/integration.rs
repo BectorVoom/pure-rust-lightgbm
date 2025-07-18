@@ -175,11 +175,10 @@ fn test_memory_management_integration() {
     assert!(buffer.is_aligned());
     
     // Test memory pool functionality
-    let pool = MemoryPool::new(1024);
-    assert!(pool.is_ok());
+    let pool: MemoryPool<f32> = MemoryPool::new(1024, 10);
     
     // Test memory statistics
-    let stats = pool.unwrap().stats();
+    let stats = pool.stats();
     assert_eq!(stats.alignment, ALIGNED_SIZE);
     assert!(stats.allocated_bytes >= 0);
 }

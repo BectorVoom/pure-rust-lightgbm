@@ -138,10 +138,9 @@ fn test_objective_function_integration() {
         let result = obj_func.get_gradients(
             &scores.view(),
             &labels.view(),
+            None, // weights
             &mut gradients.view_mut(),
             &mut hessians.view_mut(),
-            num_data,
-            num_tree_per_iteration,
         );
         
         assert!(result.is_ok());

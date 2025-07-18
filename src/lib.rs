@@ -293,16 +293,20 @@ pub fn capabilities() -> core::CoreCapabilities {
 
 // Dataset implementation moved to dataset module
 
-/// Placeholder for LGBMRegressor implementation (to be implemented in boosting module)
+/// LGBMRegressor implementation using GBDT
 #[derive(Debug)]
 pub struct LGBMRegressor {
     config: Config,
+    model: Option<boosting::GBDT>,
 }
 
 impl LGBMRegressor {
     /// Create a new regressor with the given configuration.
     pub fn new(config: Config) -> Self {
-        LGBMRegressor { config }
+        LGBMRegressor { 
+            config,
+            model: None,
+        }
     }
 
     /// Get the configuration
@@ -311,13 +315,36 @@ impl LGBMRegressor {
     }
 
     /// Train the model on the given dataset.
-    pub fn fit(&mut self, _dataset: &Dataset) -> Result<()> {
-        Err(LightGBMError::not_implemented("LGBMRegressor::fit"))
+    pub fn fit(&mut self, dataset: &Dataset) -> Result<()> {
+        log::info!("Training LGBMRegressor with {} samples, {} features", 
+                  dataset.num_data(), dataset.num_features());
+        
+        // Ensure we have regression objective
+        let mut training_config = self.config.clone();
+        training_config.objective = ObjectiveType::Regression;
+        
+        // Create GBDT model
+        let mut gbdt = boosting::GBDT::new(training_config, dataset.clone())?;
+        
+        // Train the model
+        gbdt.train()?;
+        
+        // Store the trained model
+        self.model = Some(gbdt);
+        
+        log::info!("LGBMRegressor training completed");
+        Ok(())
     }
 
     /// Make predictions on the given features.
-    pub fn predict(&self, _features: &ndarray::Array2<f32>) -> Result<ndarray::Array1<Score>> {
-        Err(LightGBMError::not_implemented("LGBMRegressor::predict"))
+    pub fn predict(&self, features: &ndarray::Array2<f32>) -> Result<ndarray::Array1<Score>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        log::debug!("Making predictions on {} samples", features.nrows());
+        
+        let predictions = model.predict(features)?;
+        Ok(predictions)
     }
 
     /// Add validation dataset for early stopping
@@ -363,16 +390,20 @@ impl Default for LGBMRegressor {
     }
 }
 
-/// Placeholder for LGBMClassifier implementation (to be implemented in boosting module)
+/// LGBMClassifier implementation using GBDT
 #[derive(Debug)]
 pub struct LGBMClassifier {
     config: Config,
+    model: Option<boosting::GBDT>,
 }
 
 impl LGBMClassifier {
     /// Create a new classifier with the given configuration.
     pub fn new(config: Config) -> Self {
-        LGBMClassifier { config }
+        LGBMClassifier { 
+            config,
+            model: None,
+        }
     }
 
     /// Get the configuration
@@ -381,18 +412,60 @@ impl LGBMClassifier {
     }
 
     /// Train the model on the given dataset.
-    pub fn fit(&mut self, _dataset: &Dataset) -> Result<()> {
-        Err(LightGBMError::not_implemented("LGBMClassifier::fit"))
+    pub fn fit(&mut self, dataset: &Dataset) -> Result<()> {
+        log::info!("Training LGBMClassifier with {} samples, {} features", 
+                  dataset.num_data(), dataset.num_features());
+        
+        // Ensure we have classification objective
+        let mut training_config = self.config.clone();
+        if training_config.objective == ObjectiveType::Regression {
+            training_config.objective = ObjectiveType::Binary; // Default to binary for auto-detection
+        }
+        
+        // Create GBDT model
+        let mut gbdt = boosting::GBDT::new(training_config, dataset.clone())?;
+        
+        // Train the model
+        gbdt.train()?;
+        
+        // Store the trained model
+        self.model = Some(gbdt);
+        
+        log::info!("LGBMClassifier training completed");
+        Ok(())
     }
 
-    /// Make predictions on the given features.
-    pub fn predict(&self, _features: &ndarray::Array2<f32>) -> Result<ndarray::Array1<f32>> {
-        Err(LightGBMError::not_implemented("LGBMClassifier::predict"))
+    /// Make predictions on the given features (returns class labels).
+    pub fn predict(&self, features: &ndarray::Array2<f32>) -> Result<ndarray::Array1<f32>> {
+        let probabilities = self.predict_proba(features)?;
+        
+        // For binary classification, threshold at 0.5
+        let mut predictions = ndarray::Array1::zeros(probabilities.nrows());
+        for i in 0..probabilities.nrows() {
+            predictions[i] = if probabilities[[i, 0]] > 0.5 { 1.0 } else { 0.0 };
+        }
+        
+        Ok(predictions)
     }
 
     /// Predict class probabilities.
-    pub fn predict_proba(&self, _features: &ndarray::Array2<f32>) -> Result<ndarray::Array2<Score>> {
-        Err(LightGBMError::not_implemented("LGBMClassifier::predict_proba"))
+    pub fn predict_proba(&self, features: &ndarray::Array2<f32>) -> Result<ndarray::Array2<Score>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        log::debug!("Making probability predictions on {} samples", features.nrows());
+        
+        let raw_predictions = model.predict(features)?;
+        
+        // For binary classification, convert to 2-column probability matrix
+        let mut probabilities = ndarray::Array2::zeros((features.nrows(), 2));
+        for i in 0..features.nrows() {
+            let prob_positive = raw_predictions[i];
+            probabilities[[i, 1]] = prob_positive; // Probability of class 1
+            probabilities[[i, 0]] = 1.0 - prob_positive; // Probability of class 0
+        }
+        
+        Ok(probabilities)
     }
 
     /// Save model to file
@@ -497,8 +570,8 @@ mod tests {
     }
 
     #[test]
-    fn test_placeholder_implementations() {
-        // Test that placeholder methods return NotImplemented errors
+    fn test_basic_functionality() {
+        // Test that basic training and prediction work
         let features = ndarray::Array2::zeros((10, 5));
         let labels = ndarray::Array1::zeros(10);
         
@@ -508,11 +581,12 @@ mod tests {
         let mut regressor = LGBMRegressor::default();
         if let Ok(dataset) = dataset_result {
             let fit_result = regressor.fit(&dataset);
-            assert!(fit_result.is_err());
+            assert!(fit_result.is_ok());
+            
+            // Test prediction works after training
+            let predict_result = regressor.predict(&features);
+            assert!(predict_result.is_ok());
         }
-        
-        let predict_result = regressor.predict(&features);
-        assert!(predict_result.is_err());
     }
 
     #[test]

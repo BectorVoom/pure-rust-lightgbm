@@ -253,7 +253,7 @@ fn test_csv_to_model_pipeline() {
         &features,
         &labels,
         weights.as_ref(),
-        feature_names.as_ref(),
+        feature_names.as_deref(),
     ).unwrap();
     
     // 2. Dataset Configuration

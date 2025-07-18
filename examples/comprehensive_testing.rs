@@ -366,25 +366,18 @@ fn test_memory_management() -> TestResult {
                     details.push_str("Aligned buffer allocation successful; ");
                     
                     // Test memory pool
-                    match MemoryPool::new(1024 * 1024) {
-                        Ok(mut pool) => {
-                            match pool.allocate::<f32>(256) {
-                                Ok(handle) => {
-                                    let stats = pool.stats();
-                                    details.push_str(&format!(
-                                        "Memory pool working (allocated: {} bytes)",
-                                        stats.allocated_bytes
-                                    ));
-                                    pool.deallocate(handle).is_ok()
-                                }
-                                Err(e) => {
-                                    details.push_str(&format!("Pool allocation failed: {}", e));
-                                    false
-                                }
-                            }
+                    let mut pool = MemoryPool::new(1024 * 1024, 10);
+                    match pool.allocate::<f32>(256) {
+                        Ok(handle) => {
+                            let stats = pool.stats();
+                            details.push_str(&format!(
+                                "Memory pool working (allocated: {} bytes)",
+                                stats.allocated_bytes
+                            ));
+                            pool.deallocate(handle).is_ok()
                         }
                         Err(e) => {
-                            details.push_str(&format!("Memory pool creation failed: {}", e));
+                            details.push_str(&format!("Pool allocation failed: {}", e));
                             false
                         }
                     }
@@ -628,7 +621,7 @@ fn test_regressor_interface() -> TestResult {
         let regressor = LGBMRegressor::new(config);
         details.push_str(&format!(
             "Regressor created with objective: {:?}",
-            regressor.config.objective
+            regressor.config().objective
         ));
         true
     };
@@ -654,7 +647,7 @@ fn test_classifier_interface() -> TestResult {
         let classifier = LGBMClassifier::new(config);
         details.push_str(&format!(
             "Classifier created with objective: {:?}",
-            classifier.config.objective
+            classifier.config().objective
         ));
         true
     };

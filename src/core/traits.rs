@@ -75,15 +75,15 @@ pub trait ObjectiveFunction: Send + Sync + Debug {
     /// Compute gradients and hessians for the given predictions and labels.
     fn compute_gradients(
         &self,
-        predictions: &ArrayView1<Score>,
-        labels: &ArrayView1<Label>,
-        weights: Option<&ArrayView1<Label>>,
-        gradients: &mut ArrayViewMut1<Score>,
-        hessians: &mut ArrayViewMut1<Score>,
+        predictions: &ArrayView1<'_, Score>,
+        labels: &ArrayView1<'_, Label>,
+        weights: Option<&ArrayView1<'_, Label>>,
+        gradients: &mut ArrayViewMut1<'_, Score>,
+        hessians: &mut ArrayViewMut1<'_, Score>,
     ) -> Result<()>;
 
     /// Transform raw prediction scores to final output format.
-    fn transform_predictions(&self, scores: &mut ArrayViewMut1<Score>) -> Result<()>;
+    fn transform_predictions(&self, scores: &mut ArrayViewMut1<'_, Score>) -> Result<()>;
 
     /// Get the number of classes (1 for regression/binary, >1 for multiclass).
     fn num_classes(&self) -> usize;
@@ -97,16 +97,16 @@ pub trait ObjectiveFunction: Send + Sync + Debug {
     }
 
     /// Validate labels for this objective function.
-    fn validate_labels(&self, labels: &ArrayView1<Label>) -> Result<()>;
+    fn validate_labels(&self, labels: &ArrayView1<'_, Label>) -> Result<()>;
 
     /// Alias for compute_gradients for backward compatibility
     fn get_gradients(
         &self,
-        predictions: &ArrayView1<Score>,
-        labels: &ArrayView1<Label>,
-        weights: Option<&ArrayView1<Label>>,
-        gradients: &mut ArrayViewMut1<Score>,
-        hessians: &mut ArrayViewMut1<Score>,
+        predictions: &ArrayView1<'_, Score>,
+        labels: &ArrayView1<'_, Label>,
+        weights: Option<&ArrayView1<'_, Label>>,
+        gradients: &mut ArrayViewMut1<'_, Score>,
+        hessians: &mut ArrayViewMut1<'_, Score>,
     ) -> Result<()> {
         self.compute_gradients(predictions, labels, weights, gradients, hessians)
     }
@@ -121,8 +121,8 @@ pub trait TreeLearner: Send + Sync + Debug {
     fn train_tree(
         &mut self,
         features: &Array2<f32>,
-        gradients: &ArrayView1<Score>,
-        hessians: &ArrayView1<Score>,
+        gradients: &ArrayView1<'_, Score>,
+        hessians: &ArrayView1<'_, Score>,
         data_indices: Option<&[DataSize]>,
     ) -> Result<Box<dyn DecisionTree>>;
 
@@ -142,7 +142,7 @@ pub trait TreeLearner: Send + Sync + Debug {
 /// Trait for decision tree implementations.
 pub trait DecisionTree: Send + Sync + Debug {
     /// Predict a single sample.
-    fn predict(&self, features: &ArrayView1<f32>) -> Result<Score>;
+    fn predict(&self, features: &ArrayView1<'_, f32>) -> Result<Score>;
 
     /// Predict multiple samples.
     fn predict_batch(&self, features: &Array2<f32>) -> Result<Array1<Score>> {
@@ -154,7 +154,7 @@ pub trait DecisionTree: Send + Sync + Debug {
     }
 
     /// Get leaf index for a single sample.
-    fn predict_leaf_index(&self, features: &ArrayView1<f32>) -> Result<NodeIndex>;
+    fn predict_leaf_index(&self, features: &ArrayView1<'_, f32>) -> Result<NodeIndex>;
 
     /// Get the number of leaves in the tree.
     fn num_leaves(&self) -> usize;
@@ -220,9 +220,9 @@ pub trait Metric: Send + Sync + Debug {
     /// Compute the metric value.
     fn evaluate(
         &self,
-        predictions: &ArrayView1<Score>,
-        labels: &ArrayView1<Label>,
-        weights: Option<&ArrayView1<Label>>,
+        predictions: &ArrayView1<'_, Score>,
+        labels: &ArrayView1<'_, Label>,
+        weights: Option<&ArrayView1<'_, Label>>,
     ) -> Result<f64>;
 
     /// Get the metric name.
@@ -237,8 +237,8 @@ pub trait Metric: Send + Sync + Debug {
     /// Validate that predictions and labels are compatible.
     fn validate_inputs(
         &self,
-        predictions: &ArrayView1<Score>,
-        labels: &ArrayView1<Label>,
+        predictions: &ArrayView1<'_, Score>,
+        labels: &ArrayView1<'_, Label>,
     ) -> Result<()> {
         if predictions.len() != labels.len() {
             return Err(crate::core::error::LightGBMError::dimension_mismatch(
@@ -343,7 +343,7 @@ pub trait FeatureSelector: Send + Sync + Debug {
     /// Select features based on importance scores.
     fn select_features(
         &self,
-        importance_scores: &ArrayView1<f64>,
+        importance_scores: &ArrayView1<'_, f64>,
         k: usize,
     ) -> Result<Vec<FeatureIndex>>;
 
@@ -456,16 +456,16 @@ mod tests {
     impl ObjectiveFunction for MockObjective {
         fn compute_gradients(
             &self,
-            _predictions: &ArrayView1<Score>,
-            _labels: &ArrayView1<Label>,
-            _weights: Option<&ArrayView1<Label>>,
-            _gradients: &mut ArrayViewMut1<Score>,
-            _hessians: &mut ArrayViewMut1<Score>,
+            _predictions: &ArrayView1<'_, Score>,
+            _labels: &ArrayView1<'_, Label>,
+            _weights: Option<&ArrayView1<'_, Label>>,
+            _gradients: &mut ArrayViewMut1<'_, Score>,
+            _hessians: &mut ArrayViewMut1<'_, Score>,
         ) -> Result<()> {
             Ok(())
         }
 
-        fn transform_predictions(&self, _scores: &mut ArrayViewMut1<Score>) -> Result<()> {
+        fn transform_predictions(&self, _scores: &mut ArrayViewMut1<'_, Score>) -> Result<()> {
             Ok(())
         }
 
@@ -477,7 +477,7 @@ mod tests {
             "mock"
         }
 
-        fn validate_labels(&self, _labels: &ArrayView1<Label>) -> Result<()> {
+        fn validate_labels(&self, _labels: &ArrayView1<'_, Label>) -> Result<()> {
             Ok(())
         }
 

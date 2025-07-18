@@ -10,7 +10,7 @@ use ndarray::{Array1, Array2};
 use std::fs;
 use std::path::{Path, PathBuf};
 use rand::prelude::*;
-use rand::distributions::{Distribution, Standard, Uniform};
+use rand::distributions::{Distribution, Standard, Uniform, Normal};
 
 fn main() -> Result<()> {
     println!("Pure Rust LightGBM - Test Data Generator");
@@ -167,7 +167,7 @@ fn generate_complex_regression(output_dir: &Path, filename: &str, n_samples: usi
     
     let mut features = Array2::zeros((n_samples, n_features));
     let mut labels = Array1::zeros(n_samples);
-    let weights = Array1::from_fn(n_samples, |_| rng.gen::<f32>() * 0.5 + 0.5); // Weights between 0.5 and 1.0
+    let weights = Array1::from_shape_fn(n_samples, |_| rng.gen::<f32>() * 0.5 + 0.5); // Weights between 0.5 and 1.0
     
     // Generate features with different distributions
     for i in 0..n_samples {

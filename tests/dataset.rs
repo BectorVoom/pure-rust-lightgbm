@@ -272,7 +272,7 @@ fn test_dataset_factory_csv_loading() {
         &features,
         &labels,
         None,
-        feature_names.as_ref(),
+        feature_names.as_deref(),
     ).unwrap();
     
     let config = DatasetConfig::new()

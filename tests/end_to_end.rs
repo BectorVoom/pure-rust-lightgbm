@@ -35,7 +35,7 @@ fn test_complete_regression_workflow() {
         &train_features,
         &train_labels,
         train_weights.as_ref(),
-        &Some((0..10).map(|i| format!("feature_{}", i)).collect()),
+        Some((0..10).map(|i| format!("feature_{}", i)).collect::<Vec<_>>()).as_deref(),
     ).unwrap();
     
     // Step 2: Load dataset from CSV
@@ -148,7 +148,7 @@ fn test_complete_binary_classification_workflow() {
         &train_features,
         &train_labels,
         train_weights.as_ref(),
-        &Some((0..8).map(|i| format!("feature_{}", i)).collect()),
+        Some((0..8).map(|i| format!("feature_{}", i)).collect::<Vec<_>>()).as_deref(),
     ).unwrap();
     
     // Step 2: Load dataset from CSV
@@ -283,7 +283,7 @@ fn test_complete_multiclass_workflow() {
         &train_features,
         &train_labels,
         train_weights.as_ref(),
-        &Some((0..6).map(|i| format!("feature_{}", i)).collect()),
+        Some((0..6).map(|i| format!("feature_{}", i)).collect::<Vec<_>>()).as_deref(),
     ).unwrap();
     
     // Step 2: Load dataset from CSV

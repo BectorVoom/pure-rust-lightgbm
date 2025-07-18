@@ -175,14 +175,39 @@ impl CsvLoader {
             num_cols - 1  // Default: last column is target
         };
         
-        // Separate features and labels
-        let feature_cols: Vec<usize> = (0..num_cols).filter(|&i| i != target_col_idx).collect();
+        // Determine weight column if specified
+        let weight_col_idx = if let Some(ref weight_col) = self.config.dataset_config.weight_column {
+            if let Some(ref headers) = headers {
+                Some(headers.iter().position(|h| h == weight_col)
+                    .ok_or_else(|| LightGBMError::data_loading(format!("Weight column '{}' not found", weight_col)))?)
+            } else {
+                Some(weight_col.parse::<usize>()
+                    .map_err(|_| LightGBMError::data_loading("Weight column must be column name (with headers) or index"))?)
+            }
+        } else {
+            None
+        };
+        
+        log::debug!("CSV parsing: num_cols={}, target_col_idx={}, weight_col_idx={:?}", 
+                   num_cols, target_col_idx, weight_col_idx);
+        
+        // Separate features from labels and weights
+        let feature_cols: Vec<usize> = (0..num_cols)
+            .filter(|&i| i != target_col_idx && Some(i) != weight_col_idx)
+            .collect();
         let num_features = feature_cols.len();
+
+        log::debug!("CSV parsing: feature_cols={:?}, num_features={}", feature_cols, num_features);
         
         // Initialize arrays
         let mut features = Array2::<f32>::zeros((num_rows, num_features));
         let mut labels = Array1::<f32>::zeros(num_rows);
         let mut missing_mask = Array2::<bool>::from_elem((num_rows, num_features), false);
+        let mut weights = if weight_col_idx.is_some() {
+            Some(Array1::<f32>::zeros(num_rows))
+        } else {
+            None
+        };
         
         // Parse data
         for (row_idx, record) in records.iter().enumerate() {
@@ -192,6 +217,15 @@ impl CsvLoader {
                 .ok_or_else(|| LightGBMError::data_loading(format!(
                     "Invalid target value '{}' at row {}", label_str, row_idx + 1
                 )))?;
+            
+            // Parse weight if present
+            if let (Some(ref mut weights_array), Some(weight_idx)) = (weights.as_mut(), weight_col_idx) {
+                let weight_str = &record[weight_idx];
+                weights_array[row_idx] = self.parse_numeric_value(weight_str)
+                    .ok_or_else(|| LightGBMError::data_loading(format!(
+                        "Invalid weight value '{}' at row {}", weight_str, row_idx + 1
+                    )))?;
+            }
             
             // Parse features
             for (feat_idx, &col_idx) in feature_cols.iter().enumerate() {
@@ -218,7 +252,7 @@ impl CsvLoader {
         Dataset::new(
             features,
             labels,
-            None,  // weights
+            weights,  // weights parsed from CSV
             None,  // groups
             Some(feature_names),
             None,  // feature_types - will be inferred

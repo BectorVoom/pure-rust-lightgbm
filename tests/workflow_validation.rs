@@ -7,6 +7,7 @@ use lightgbm_rust::*;
 use ndarray::{Array1, Array2};
 use std::fs;
 use std::path::Path;
+use ndarray::s;
 use std::time::Instant;
 use tempfile::TempDir;
 
@@ -317,9 +318,8 @@ fn run_regression_workflow(temp_dir: &TempDir) -> Result<RegressionMetrics> {
     // Ensure compatible datasets
     if train_stats.num_features != test_stats.num_features {
         return Err(LightGBMError::data_dimension_mismatch(
-            train_stats.num_features,
-            test_stats.num_features,
-            "Feature count mismatch between train and test",
+            format!("Feature count mismatch between train and test: expected {}, got {}", 
+                   train_stats.num_features, test_stats.num_features)
         ));
     }
     
@@ -355,7 +355,7 @@ fn run_regression_workflow(temp_dir: &TempDir) -> Result<RegressionMetrics> {
     // Verify predictions consistency
     for (orig, loaded) in predictions.iter().zip(loaded_predictions.iter()) {
         if (orig - loaded).abs() > 1e-6 {
-            return Err(LightGBMError::runtime("Model loading inconsistency"));
+            return Err(LightGBMError::internal("Model loading inconsistency"));
         }
     }
     

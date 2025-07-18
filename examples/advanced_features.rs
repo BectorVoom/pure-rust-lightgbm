@@ -76,7 +76,7 @@ fn demonstrate_advanced_configuration() -> Result<()> {
         .lambda_l1(0.1)
         .lambda_l2(0.2)
         .min_data_in_leaf(50)
-        .min_sum_hessian_in_leaf(0.001)
+        // .min_sum_hessian_in_leaf(0.001)  // Method not available in ConfigBuilder yet
         .feature_fraction(0.8)
         .bagging_fraction(0.9)
         .bagging_freq(5)
@@ -213,7 +213,7 @@ fn demonstrate_memory_management() -> Result<()> {
     println!("    - Alignment: {} bytes", ALIGNED_SIZE);
     
     // Test memory pool
-    let pool = MemoryPool::new(4096)?;
+    let pool = MemoryPool::new(4096, 5);
     let stats = pool.stats();
     println!("  Memory pool created:");
     println!("    - Allocated bytes: {}", stats.allocated_bytes);
