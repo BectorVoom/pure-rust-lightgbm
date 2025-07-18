@@ -191,9 +191,34 @@ impl CsvLoader {
         log::debug!("CSV parsing: num_cols={}, target_col_idx={}, weight_col_idx={:?}", 
                    num_cols, target_col_idx, weight_col_idx);
         
-        // Separate features from labels and weights
+        // Determine any additional columns to exclude (like weight columns that are auto-detected)
+        let mut excluded_columns = vec![target_col_idx];
+        if let Some(weight_idx) = weight_col_idx {
+            excluded_columns.push(weight_idx);
+        }
+        
+        log::debug!("Starting auto-exclusion logic, excluded_columns so far: {:?}", excluded_columns);
+        
+        // Additionally exclude any columns that look like weight columns by name (if headers available)
+        if let Some(ref headers) = headers {
+            log::debug!("Available headers: {:?}", headers.iter().collect::<Vec<_>>());
+            let common_weight_names = ["weight", "weights", "sample_weight", "instance_weight"];
+            for (col_idx, header) in headers.iter().enumerate() {
+                log::debug!("Checking header '{}' at index {} for weight patterns", header, col_idx);
+                if common_weight_names.iter().any(|&name| header.eq_ignore_ascii_case(name)) {
+                    if !excluded_columns.contains(&col_idx) {
+                        excluded_columns.push(col_idx);
+                        log::debug!("Auto-excluding weight-like column '{}' at index {}", header, col_idx);
+                    }
+                }
+            }
+        } else {
+            log::debug!("No headers available for auto-exclusion");
+        }
+
+        // Separate feature columns (exclude target, weight, and auto-detected weight columns)
         let feature_cols: Vec<usize> = (0..num_cols)
-            .filter(|&i| i != target_col_idx && Some(i) != weight_col_idx)
+            .filter(|&i| !excluded_columns.contains(&i))
             .collect();
         let num_features = feature_cols.len();
 
@@ -211,20 +236,30 @@ impl CsvLoader {
         
         // Parse data
         for (row_idx, record) in records.iter().enumerate() {
-            // Parse label
+            // Parse label with missing value handling
             let label_str = &record[target_col_idx];
-            labels[row_idx] = self.parse_numeric_value(label_str)
-                .ok_or_else(|| LightGBMError::data_loading(format!(
-                    "Invalid target value '{}' at row {}", label_str, row_idx + 1
-                )))?;
+            if let Some(value) = self.parse_numeric_value(label_str) {
+                labels[row_idx] = value;
+            } else {
+                // Handle missing target value
+                if self.config.dataset_config.use_missing_as_zero {
+                    labels[row_idx] = 0.0;
+                } else {
+                    labels[row_idx] = f32::NAN;
+                }
+                log::debug!("Missing target value at row {}, using NaN", row_idx + 1);
+            }
             
-            // Parse weight if present
+            // Parse weight if present with missing value handling
             if let (Some(ref mut weights_array), Some(weight_idx)) = (weights.as_mut(), weight_col_idx) {
                 let weight_str = &record[weight_idx];
-                weights_array[row_idx] = self.parse_numeric_value(weight_str)
-                    .ok_or_else(|| LightGBMError::data_loading(format!(
-                        "Invalid weight value '{}' at row {}", weight_str, row_idx + 1
-                    )))?;
+                if let Some(value) = self.parse_numeric_value(weight_str) {
+                    weights_array[row_idx] = value;
+                } else {
+                    // Handle missing weight value - default to 1.0 for missing weights
+                    weights_array[row_idx] = 1.0;
+                    log::debug!("Missing weight value at row {}, using default weight 1.0", row_idx + 1);
+                }
             }
             
             // Parse features
