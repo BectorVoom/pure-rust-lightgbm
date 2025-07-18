@@ -186,6 +186,7 @@ pub mod utils {
 mod tests {
     use super::*;
     use ndarray::Array1;
+    use crate::BinType;
 
     #[test]
     fn test_categorical_binner_creation() {

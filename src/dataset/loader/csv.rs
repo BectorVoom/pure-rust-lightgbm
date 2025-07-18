@@ -71,6 +71,7 @@ pub struct CsvLoader {
 impl CsvLoader {
     /// Create a new CSV loader
     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
+        println!("DEBUG: CsvLoader::new called");
         Ok(CsvLoader {
             config: LoaderConfig {
                 dataset_config: dataset_config.clone(),
@@ -120,6 +121,7 @@ impl CsvLoader {
     /// Load CSV file
     pub fn load_csv<P: AsRef<Path>>(&self, path: P) -> Result<Dataset> {
         let path = path.as_ref();
+        println!("DEBUG: CsvLoader::load_csv called for path: {}", path.display());
         log::info!("Loading CSV file: {}", path.display());
 
         // Validate file exists and is readable
@@ -307,7 +309,7 @@ impl CsvLoader {
         // Initialize arrays
         let mut features = Array2::<f32>::zeros((num_rows, num_features));
         let mut labels = Array1::<f32>::zeros(num_rows);
-        let mut missing_mask = Array2::<bool>::zeros((num_rows, num_features));
+        let mut missing_mask = Array2::<bool>::from_elem((num_rows, num_features), false);
         let mut weights = if weight_col_idx.is_some() {
             Some(Array1::<f32>::zeros(num_rows))
         } else {
@@ -357,6 +359,7 @@ impl CsvLoader {
                         missing_mask[[row_idx, feat_idx]] = false;
                     }
                     None => {
+                        println!("DEBUG: Missing value detected at row {}, feature {}, value: '{}'", row_idx, feat_idx, value_str);
                         // Handle missing value based on configuration
                         if self.dataset_config.use_missing_as_zero {
                             features[[row_idx, feat_idx]] = 0.0;
@@ -384,6 +387,11 @@ impl CsvLoader {
 
         // Set missing values mask if any missing values detected
         let has_missing = missing_mask.iter().any(|&x| x);
+        let missing_count = missing_mask.iter().filter(|&&x| x).count();
+        
+        println!("DEBUG: Missing values detected: {}, count: {}", has_missing, missing_count);
+        println!("DEBUG: Missing mask shape: {:?}", missing_mask.dim());
+        
         if has_missing {
             dataset.set_missing_values(missing_mask)?;
         }

@@ -194,6 +194,7 @@ pub struct DatasetFactory;
 impl DatasetFactory {
     /// Create dataset from CSV file
     pub fn from_csv<P: AsRef<Path>>(path: P, config: DatasetConfig) -> Result<Dataset> {
+        println!("DEBUG: DatasetFactory::from_csv called");
         config.validate()?;
         let loader = loader::CsvLoader::new(config.clone())?;
         loader.load(path)

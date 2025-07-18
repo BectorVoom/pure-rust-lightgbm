@@ -584,6 +584,8 @@ pub mod utils {
 mod tests {
     use super::*;
     use ndarray::Array1;
+    use crate::BinType;
+    use crate::dataset::binning::MissingHandling;
     
     #[test]
     fn test_numerical_binner_creation() {

@@ -16,6 +16,14 @@ members = [
     "."
 ]
 
+[[bin]]
+name = "test_csv_feature_count"
+path = "test_csv_feature_count.rs"
+
+[[bin]]
+name = "test_missing_values"
+path = "test_missing_values.rs"
+
 [features]
 default = ["cpu", "polars", "csv"]
 cpu = []
