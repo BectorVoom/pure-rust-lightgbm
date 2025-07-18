@@ -476,7 +476,7 @@ fn test_cross_validation_framework() {
                 match classifier.predict(&val_features_array) {
                     Ok(predictions) => {
                         let metrics = calculate_classification_metrics(&predictions, &val_labels_array);
-                        cv_results.push(metrics);
+                        cv_results.push(metrics.clone());
                         println!("Fold {} metrics: {:?}", fold + 1, metrics);
                     }
                     Err(e) => {
@@ -568,14 +568,15 @@ struct ClassificationMetrics {
     f1_score: f64,
 }
 
-fn calculate_classification_metrics(predictions: &Array1<i32>, labels: &Array1<f32>) -> ClassificationMetrics {
+fn calculate_classification_metrics(predictions: &Array1<f32>, labels: &Array1<f32>) -> ClassificationMetrics {
     let n = predictions.len() as f64;
     
-    // Convert labels to i32 for comparison
+    // Convert predictions and labels to i32 for comparison
+    let int_predictions: Vec<i32> = predictions.iter().map(|&x| x as i32).collect();
     let int_labels: Vec<i32> = labels.iter().map(|&x| x as i32).collect();
     
     // Accuracy
-    let correct = predictions.iter()
+    let correct = int_predictions.iter()
         .zip(int_labels.iter())
         .filter(|(&pred, &label)| pred == label)
         .count() as f64;
@@ -586,7 +587,7 @@ fn calculate_classification_metrics(predictions: &Array1<i32>, labels: &Array1<f
     let mut fp = 0.0;
     let mut fn_ = 0.0;
     
-    for (&pred, &label) in predictions.iter().zip(int_labels.iter()) {
+    for (&pred, &label) in int_predictions.iter().zip(int_labels.iter()) {
         match (pred, label) {
             (1, 1) => tp += 1.0,
             (1, 0) => fp += 1.0,
@@ -630,12 +631,13 @@ struct MulticlassMetrics {
     per_class_metrics: HashMap<i32, ClassificationMetrics>,
 }
 
-fn calculate_multiclass_metrics(predictions: &Array1<i32>, labels: &Array1<f32>, num_classes: usize) -> MulticlassMetrics {
+fn calculate_multiclass_metrics(predictions: &Array1<f32>, labels: &Array1<f32>, num_classes: usize) -> MulticlassMetrics {
     let n = predictions.len() as f64;
+    let int_predictions: Vec<i32> = predictions.iter().map(|&x| x as i32).collect();
     let int_labels: Vec<i32> = labels.iter().map(|&x| x as i32).collect();
     
     // Overall accuracy
-    let correct = predictions.iter()
+    let correct = int_predictions.iter()
         .zip(int_labels.iter())
         .filter(|(&pred, &label)| pred == label)
         .count() as f64;
@@ -651,8 +653,8 @@ fn calculate_multiclass_metrics(predictions: &Array1<i32>, labels: &Array1<f32>,
         let class_i32 = class as i32;
         
         // Binary classification metrics for this class vs all others
-        let class_predictions: Array1<i32> = predictions.iter()
-            .map(|&pred| if pred == class_i32 { 1 } else { 0 })
+        let class_predictions: Array1<f32> = int_predictions.iter()
+            .map(|&pred| if pred == class_i32 { 1.0 } else { 0.0 })
             .collect();
         let class_labels: Array1<f32> = int_labels.iter()
             .map(|&label| if label == class_i32 { 1.0 } else { 0.0 })
