@@ -364,8 +364,11 @@ impl LGBMRegressor {
     }
 
     /// Get feature importance
-    pub fn feature_importance(&self, _importance_type: ImportanceType) -> Result<ndarray::Array1<f64>> {
-        Err(LightGBMError::not_implemented("LGBMRegressor::feature_importance"))
+    pub fn feature_importance(&self, importance_type: ImportanceType) -> Result<ndarray::Array1<f64>> {
+        match &self.model {
+            Some(model) => model.feature_importance(&importance_type),
+            None => Err(LightGBMError::training("Model not trained yet. Call fit() first.")),
+        }
     }
 
     /// Predict feature contributions (SHAP values)
@@ -476,6 +479,14 @@ impl LGBMClassifier {
     /// Load model from file
     pub fn load_model<P: AsRef<std::path::Path>>(_path: P) -> Result<Self> {
         Err(LightGBMError::not_implemented("LGBMClassifier::load_model"))
+    }
+    
+    /// Get feature importance
+    pub fn feature_importance(&self, importance_type: ImportanceType) -> Result<ndarray::Array1<f64>> {
+        match &self.model {
+            Some(model) => model.feature_importance(&importance_type),
+            None => Err(LightGBMError::training("Model not trained yet. Call fit() first.")),
+        }
     }
 }
 

@@ -87,6 +87,39 @@ impl SimpleTree {
         // Fallback (shouldn't reach here)
         0.0
     }
+    
+    /// Calculate feature importance for this tree based on splits
+    pub fn feature_importance(&self, num_features: usize, importance_type: &ImportanceType) -> Array1<f64> {
+        let mut importance = Array1::zeros(num_features);
+        
+        match importance_type {
+            ImportanceType::Split => {
+                // Count the number of times each feature is used for splitting
+                for node in &self.nodes {
+                    if node.feature_index >= 0 {
+                        let feature_idx = node.feature_index as usize;
+                        if feature_idx < num_features {
+                            importance[feature_idx] += 1.0;
+                        }
+                    }
+                }
+            }
+            ImportanceType::Gain => {
+                // For gain-based importance, we would need split gain information
+                // For now, we'll use sample count as a proxy for gain
+                for node in &self.nodes {
+                    if node.feature_index >= 0 {
+                        let feature_idx = node.feature_index as usize;
+                        if feature_idx < num_features {
+                            importance[feature_idx] += node.sample_count as f64;
+                        }
+                    }
+                }
+            }
+        }
+        
+        importance
+    }
 }
 
 /// Gradient Boosting Decision Tree implementation
@@ -354,6 +387,42 @@ impl GBDT {
     /// Get the trained models
     pub fn models(&self) -> &[SimpleTree] {
         &self.models
+    }
+    
+    /// Calculate feature importance across all trees
+    pub fn feature_importance(&self, importance_type: &ImportanceType) -> Result<Array1<f64>> {
+        let num_features = if let Some(ref train_data) = self.train_data {
+            train_data.num_features()
+        } else {
+            return Err(LightGBMError::training("No training data available to determine feature count"));
+        };
+        
+        let mut total_importance = Array1::zeros(num_features);
+        
+        // Aggregate importance from all trees
+        for tree in &self.models {
+            let tree_importance = tree.feature_importance(num_features, importance_type);
+            total_importance = total_importance + tree_importance;
+        }
+        
+        // Normalize based on importance type
+        match importance_type {
+            ImportanceType::Split => {
+                // For split-based importance, normalize by the number of trees
+                if !self.models.is_empty() {
+                    total_importance = total_importance / (self.models.len() as f64);
+                }
+            }
+            ImportanceType::Gain => {
+                // For gain-based importance, normalize by the total gain
+                let total_gain: f64 = total_importance.sum();
+                if total_gain > 0.0 {
+                    total_importance = total_importance / total_gain;
+                }
+            }
+        }
+        
+        Ok(total_importance)
     }
 }
 

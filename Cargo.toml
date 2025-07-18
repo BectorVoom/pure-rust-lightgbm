@@ -24,6 +24,10 @@ path = "test_csv_feature_count.rs"
 name = "test_missing_values"
 path = "test_missing_values.rs"
 
+[[bin]]
+name = "test_feature_importance"
+path = "test_feature_importance.rs"
+
 [features]
 default = ["cpu", "polars", "csv"]
 cpu = []
