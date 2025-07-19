@@ -98,7 +98,7 @@ impl ModelEnsemble {
                     "Number of weights must match number of models"
                 ));
             }
-            
+
             let sum: f64 = weights.iter().sum();
             if (sum - 1.0).abs() > 1e-6 {
                 return Err(LightGBMError::config("Model weights must sum to 1.0"));
@@ -121,12 +121,12 @@ impl ModelEnsemble {
     fn predict_average(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         let num_samples = features.nrows();
         let mut predictions = Array1::zeros(num_samples);
-        
+
         for model in &self.models {
             let model_predictions = model.predict(&features.to_owned())?;
             predictions = predictions + model_predictions;
         }
-        
+
         predictions = predictions / (self.models.len() as Score);
         Ok(predictions)
     }
@@ -135,15 +135,15 @@ impl ModelEnsemble {
     fn predict_weighted_average(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         let weights = self.config.weights.as_ref()
             .ok_or_else(|| LightGBMError::config("Weights required for weighted averaging"))?;
-        
+
         let num_samples = features.nrows();
         let mut predictions = Array1::zeros(num_samples);
-        
+
         for (model, &weight) in self.models.iter().zip(weights.iter()) {
             let model_predictions = model.predict(&features.to_owned())?;
             predictions = predictions + model_predictions * (weight as Score);
         }
-        
+
         Ok(predictions)
     }
 
