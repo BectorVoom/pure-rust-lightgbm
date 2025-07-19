@@ -113,6 +113,7 @@ impl ModelEnsemble {
         match self.config.method {
             EnsembleMethod::Average => self.predict_average(features),
             EnsembleMethod::WeightedAverage => self.predict_weighted_average(features),
+            // TODO: Implement additional ensemble methods according to design document (LightGBMError::NotImplemented remains)
             _ => Err(LightGBMError::not_implemented("Ensemble method not implemented")),
         }
     }
