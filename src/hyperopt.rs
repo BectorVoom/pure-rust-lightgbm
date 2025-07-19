@@ -238,6 +238,7 @@ pub fn optimize_hyperparameters(
     _param_space: &HyperparameterSpace,
     _config: &OptimizationConfig,
 ) -> Result<OptimizationResult> {
+    // TODO: Implement hyperparameter optimization functionality according to design document (LightGBMError::NotImplemented remains)
     Err(LightGBMError::not_implemented("optimize_hyperparameters"))
 }
 
@@ -248,5 +249,6 @@ pub fn cross_validate(
     _cv_config: &CrossValidationConfig,
     _metrics: &[&str],
 ) -> Result<CrossValidationResult> {
+    // TODO: Implement cross-validation functionality according to design document (LightGBMError::NotImplemented remains)
     Err(LightGBMError::not_implemented("cross_validate"))
 }
