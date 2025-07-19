@@ -352,6 +352,7 @@ impl LGBMRegressor {
 
     /// Add validation dataset for early stopping
     pub fn add_validation_data(&mut self, _dataset: &Dataset) -> Result<()> {
+        // TODO: Implement validation data functionality according to design document (LightGBMError::NotImplemented remains)
         Err(LightGBMError::not_implemented("LGBMRegressor::add_validation_data"))
     }
 
@@ -363,6 +364,7 @@ impl LGBMRegressor {
 
     /// Get training history
     pub fn training_history(&self) -> Result<TrainingHistory> {
+        // TODO: Implement training history tracking according to design document (LightGBMError::NotImplemented remains)
         Err(LightGBMError::not_implemented("LGBMRegressor::training_history"))
     }
 
