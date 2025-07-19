@@ -179,11 +179,13 @@ impl ClassificationEnsemble {
 
     /// Make class predictions using the ensemble
     pub fn predict(&self, _features: &ArrayView2<'_, f32>) -> Result<Array1<f32>> {
+        // TODO: Implement ClassificationEnsemble prediction functionality according to design document (LightGBMError::NotImplemented remains)
         Err(LightGBMError::not_implemented("ClassificationEnsemble::predict"))
     }
 
     /// Make probability predictions using the ensemble
     pub fn predict_proba(&self, _features: &ArrayView2<'_, f32>) -> Result<Array2<Score>> {
+        // TODO: Implement ClassificationEnsemble probability prediction functionality according to design document (LightGBMError::NotImplemented remains)
         Err(LightGBMError::not_implemented("ClassificationEnsemble::predict_proba"))
     }
 }
