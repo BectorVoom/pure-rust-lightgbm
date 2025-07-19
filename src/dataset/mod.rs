@@ -23,19 +23,19 @@ use crate::core::types::*;
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 
+use polars::datatypes::PlSmallStr;
 use std::path::Path;
-
 /// Dataset configuration structure
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DatasetConfig {
     /// Target column name (for supervised learning)
-    pub target_column: Option<String>,
+    pub target_column: Option<PlSmallStr>,
     /// Feature columns to use (None means all except target)
-    pub feature_columns: Option<Vec<String>>,
+    pub feature_columns: Option<Vec<PlSmallStr>>,
     /// Weight column name (for weighted learning)
-    pub weight_column: Option<String>,
+    pub weight_column: Option<PlSmallStr>,
     /// Group column name (for ranking)
-    pub group_column: Option<String>,
+    pub group_column: Option<PlSmallStr>,
     /// Maximum number of bins for feature discretization
     pub max_bin: usize,
     /// Minimum data points per bin
@@ -51,7 +51,7 @@ pub struct DatasetConfig {
     /// Categorical feature indices
     pub categorical_features: Option<Vec<usize>>,
     /// Feature names
-    pub feature_names: Option<Vec<String>>,
+    pub feature_names: Option<Vec<PlSmallStr>>,
     /// Enable two-round loading for large datasets
     pub two_round: bool,
     /// Save binary dataset file
@@ -95,19 +95,19 @@ impl DatasetConfig {
     }
 
     /// Set target column name
-    pub fn with_target_column<S: Into<String>>(mut self, target: S) -> Self {
+    pub fn with_target_column<S: Into<PlSmallStr>>(mut self, target: S) -> Self {
         self.target_column = Some(target.into());
         self
     }
 
     /// Set feature columns
-    pub fn with_feature_columns(mut self, features: Vec<String>) -> Self {
+    pub fn with_feature_columns(mut self, features: Vec<PlSmallStr>) -> Self {
         self.feature_columns = Some(features);
         self
     }
 
     /// Set weight column name
-    pub fn with_weight_column<S: Into<String>>(mut self, weight: S) -> Self {
+    pub fn with_weight_column<S: Into<PlSmallStr>>(mut self, weight: S) -> Self {
         self.weight_column = Some(weight.into());
         self
     }
@@ -193,36 +193,12 @@ pub struct DatasetFactory;
 
 impl DatasetFactory {
     /// Create dataset from CSV file
-    pub fn from_csv<P: AsRef<Path>>(path: P, config: DatasetConfig) -> Result<Dataset> {
-        println!("DEBUG: DatasetFactory::from_csv called");
-        config.validate()?;
-        let loader = loader::CsvLoader::new(config.clone())?;
-        loader.load(path)
-    }
 
-    /// Create dataset from Polars DataFrame
-    #[cfg(feature = "polars")]
     pub fn from_polars(df: &polars::prelude::DataFrame, config: DatasetConfig) -> Result<Dataset> {
         config.validate()?;
         let loader = loader::PolarsLoader::new(config.clone())?;
         loader.load_dataframe(df)
     }
-
-    /// Create dataset from Arrow Table - Temporarily disabled (uncomment when arrow feature is added)
-    // #[cfg(feature = "arrow")]
-    // pub fn from_arrow(table: &arrow::array::RecordBatch, config: DatasetConfig) -> Result<Dataset> {
-    //     config.validate()?;
-    //     let loader = loader::ArrowLoader::new(config.clone())?;
-    //     loader.load_table(table)
-    // }
-
-    /// Create dataset from Parquet file - Temporarily disabled (uncomment when parquet feature is added)
-    // #[cfg(feature = "parquet")]
-    // pub fn from_parquet<P: AsRef<Path>>(path: P, config: DatasetConfig) -> Result<Dataset> {
-    //     config.validate()?;
-    //     let loader = loader::ParquetLoader::new(config.clone())?;
-    //     loader.load(path)
-    // }
 
     /// Create dataset from numpy-style arrays
     pub fn from_arrays(
@@ -234,13 +210,6 @@ impl DatasetFactory {
         config.validate()?;
         let loader = loader::ArrayLoader::new(config.clone())?;
         loader.load_arrays(features, labels, weights)
-    }
-
-    /// Create dataset from binary file
-    pub fn from_binary<P: AsRef<Path>>(path: P, config: DatasetConfig) -> Result<Dataset> {
-        config.validate()?;
-        let loader = loader::BinaryLoader::new(config.clone())?;
-        loader.load(path)
     }
 
     /// Create dataset from memory-mapped file
@@ -477,15 +446,15 @@ pub mod utils {
     pub fn convert_dataset(_dataset: &Dataset, format: &str) -> Result<Vec<u8>> {
         match format {
             "csv" => {
-                // TODO: Implement CSV conversion
+                // TODO: Implement CSV conversion according to design document (LightGBMError::NotImplemented remains)
                 Err(LightGBMError::not_implemented("CSV conversion"))
             }
             "json" => {
-                // TODO: Implement JSON conversion
+                // TODO: Implement JSON conversion according to design document (LightGBMError::NotImplemented remains)
                 Err(LightGBMError::not_implemented("JSON conversion"))
             }
             "parquet" => {
-                // TODO: Implement Parquet conversion
+                // TODO: Implement Parquet conversion according to design document (LightGBMError::NotImplemented remains)
                 Err(LightGBMError::not_implemented("Parquet conversion"))
             }
             _ => Err(LightGBMError::invalid_parameter(
@@ -519,7 +488,7 @@ mod tests {
             .with_categorical_features(vec![0, 1, 2])
             .with_two_round(true);
 
-        assert_eq!(config.target_column, Some("target".to_string()));
+        assert_eq!(config.target_column, Some("target".into()));
         assert_eq!(config.max_bin, 128);
         assert_eq!(config.categorical_features, Some(vec![0, 1, 2]));
         assert!(config.two_round);
@@ -546,14 +515,15 @@ mod tests {
         let features = Array2::from_shape_vec(
             (6, 2),
             vec![
-                1.5, 1.0,   // Row 0: [1.5, 1.0]
-                2.7, 1.0,   // Row 1: [2.7, 1.0]
-                3.2, 2.0,   // Row 2: [3.2, 2.0]
-                4.8, 2.0,   // Row 3: [4.8, 2.0]
-                5.1, 1.0,   // Row 4: [5.1, 1.0]
-                6.9, 2.0,   // Row 5: [6.9, 2.0]
-            ]
-        ).unwrap();
+                1.5, 1.0, // Row 0: [1.5, 1.0]
+                2.7, 1.0, // Row 1: [2.7, 1.0]
+                3.2, 2.0, // Row 2: [3.2, 2.0]
+                4.8, 2.0, // Row 3: [4.8, 2.0]
+                5.1, 1.0, // Row 4: [5.1, 1.0]
+                6.9, 2.0, // Row 5: [6.9, 2.0]
+            ],
+        )
+        .unwrap();
 
         let types = utils::detect_feature_types(&features);
         assert_eq!(types.len(), 2);

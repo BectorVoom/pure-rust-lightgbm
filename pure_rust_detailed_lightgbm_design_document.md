@@ -360,7 +360,7 @@ pub struct Dataset {
     /// Number of features
     num_features: usize,
     /// Feature names for interpretability
-    feature_names: Option<Vec<String>>,
+    feature_names: Option<Vec<PlSmallStr>>,
     /// Feature binning information
     bin_mappers: Vec<BinMapper>,
     /// Missing value indicators

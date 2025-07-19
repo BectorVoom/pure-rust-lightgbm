@@ -191,7 +191,7 @@ fn test_error_handling_integration() {
     let param_error = LightGBMError::invalid_parameter("learning_rate", "-0.1", "must be positive");
     assert_eq!(param_error.category(), "invalid_parameter");
 
-    let not_impl_error = :not_implemented("Feature not implemented");
+    let not_impl_error = LightGBMError::not_implemented("Feature not implemented");
     assert_eq!(not_impl_error.category(), "not_implemented");
 
     // Test error propagation

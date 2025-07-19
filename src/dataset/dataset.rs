@@ -8,6 +8,7 @@ use crate::core::types::*;
 
 use crate::dataset::binning::BinMapper;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use polars::prelude::PlSmallStr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,7 +29,7 @@ pub struct Dataset {
     /// Number of features
     num_features: usize,
     /// Feature names for interpretability
-    feature_names: Option<Vec<String>>,
+    feature_names: Option<Vec<PlSmallStr>>,
     /// Feature types (numerical or categorical)
     feature_types: Vec<FeatureType>,
     /// Feature binning information
@@ -94,7 +95,7 @@ pub struct DatasetInfo {
     /// Sparsity ratio
     pub sparsity: f64,
     /// Feature names
-    pub feature_names: Option<Vec<String>>,
+    pub feature_names: Option<Vec<PlSmallStr>>,
 }
 
 impl Dataset {
@@ -104,7 +105,7 @@ impl Dataset {
         labels: Array1<f32>,
         weights: Option<Array1<f32>>,
         groups: Option<Array1<DataSize>>,
-        feature_names: Option<Vec<String>>,
+        feature_names: Option<Vec<PlSmallStr>>,
         feature_types: Option<Vec<FeatureType>>,
     ) -> Result<Self> {
         let num_data = features.nrows() as DataSize;
@@ -215,7 +216,8 @@ impl Dataset {
 
     /// Get a single label at the specified index
     pub fn label(&self, index: usize) -> Result<f32> {
-        self.labels.get(index)
+        self.labels
+            .get(index)
             .copied()
             .ok_or_else(|| LightGBMError::dataset(format!("Label index {} out of bounds", index)))
     }
@@ -248,7 +250,7 @@ impl Dataset {
             num_features: self.num_features(),
             num_classes: self.detect_num_classes(),
             feature_stats: Vec::new(), // TODO: Implement detailed feature stats if needed
-            missing_counts: Vec::new(), // TODO: Implement missing counts if needed  
+            missing_counts: Vec::new(), // TODO: Implement missing counts if needed
             memory_usage: self.memory_usage(),
             sparsity: self.calculate_sparsity(),
         }
@@ -260,7 +262,7 @@ impl Dataset {
     }
 
     /// Get feature names
-    pub fn feature_names(&self) -> Option<&[String]> {
+    pub fn feature_names(&self) -> Option<&[PlSmallStr]> {
         self.feature_names.as_deref()
     }
 
@@ -553,7 +555,7 @@ pub struct DatasetBuilder {
     labels: Option<Array1<f32>>,
     weights: Option<Array1<f32>>,
     groups: Option<Array1<DataSize>>,
-    feature_names: Option<Vec<String>>,
+    feature_names: Option<Vec<PlSmallStr>>,
     feature_types: Option<Vec<FeatureType>>,
     metadata: DatasetMetadata,
 }
@@ -597,7 +599,7 @@ impl DatasetBuilder {
     }
 
     /// Set feature names
-    pub fn feature_names(mut self, names: Vec<String>) -> Self {
+    pub fn feature_names(mut self, names: Vec<PlSmallStr>) -> Self {
         self.feature_names = Some(names);
         self
     }
@@ -698,7 +700,7 @@ mod tests {
     fn test_dataset_builder() {
         let features = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
         let labels = Array1::from_vec(vec![0.0, 1.0]);
-        let feature_names = vec!["feature1".to_string(), "feature2".to_string()];
+        let feature_names = vec!["feature1".into(), "feature2".into()];
 
         let dataset = Dataset::builder()
             .features(features)
@@ -717,12 +719,13 @@ mod tests {
     fn test_dataset_validation() {
         // Create dataset with 10 samples to meet validation requirements
         let features = Array2::from_shape_vec(
-            (10, 2), 
+            (10, 2),
             vec![
-                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
-                11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0
-            ]
-        ).unwrap();
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+                16.0, 17.0, 18.0, 19.0, 20.0,
+            ],
+        )
+        .unwrap();
         let labels = Array1::from_vec(vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]);
 
         let dataset = Dataset::new(features, labels, None, None, None, None).unwrap();

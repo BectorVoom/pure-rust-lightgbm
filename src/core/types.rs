@@ -133,11 +133,11 @@ impl fmt::Display for BoostingType {
 pub enum TreeLearnerType {
     /// Serial tree learning
     Serial,
-    /// Feature parallel tree learning
+    /// Feature PARALLEL tree learning
     Feature,
-    /// Data parallel tree learning
+    /// Data PARALLEL tree learning
     Data,
-    /// Voting parallel tree learning
+    /// Voting PARALLEL tree learning
     Voting,
 }
 
@@ -316,16 +316,16 @@ impl Default for TrainingHistory {
     }
 }
 
-/// Verbosity levels with Silent option
+/// Verbosity levels with SILENT option
 impl VerbosityLevel {
-    /// Silent mode (no output)
-    pub const Silent: Self = VerbosityLevel::Fatal;
+    /// SILENT mode (no  output)
+    pub const SILENT: Self = VerbosityLevel::Fatal;
 }
 
-/// Parallel tree learner types (aliases for existing types)
+/// PARALLEL tree learner types (aliases for existing types)
 impl TreeLearnerType {
-    /// Parallel tree learning (alias for Feature)
-    pub const Parallel: Self = TreeLearnerType::Feature;
+    /// PARALLEL tree learning (alias for Feature)
+    pub const PARALLEL: Self = TreeLearnerType::Feature;
 }
 
 #[cfg(test)]
@@ -367,7 +367,10 @@ mod tests {
     fn test_metric_type_display() {
         assert_eq!(MetricType::MAE.to_string(), "mae");
         assert_eq!(MetricType::MSE.to_string(), "mse");
-        assert_eq!(MetricType::Custom("my_metric".to_string()).to_string(), "my_metric");
+        assert_eq!(
+            MetricType::Custom("my_metric".to_string()).to_string(),
+            "my_metric"
+        );
     }
 
     #[test]

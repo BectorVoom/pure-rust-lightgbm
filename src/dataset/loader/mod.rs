@@ -1,18 +1,13 @@
-//! Data loading utilities for various formats.
-//!
-//! This module provides loaders for different data formats including CSV,
-//! Polars DataFrames, Arrow tables, and Parquet files.
+//! Polars DataFrames
 
-pub mod csv;
-
+pub mod loader;
 use crate::core::error::{LightGBMError, Result};
 use crate::dataset::{Dataset, DatasetConfig};
+pub use loader::PolarsLoader;
 use ndarray::{Array1, Array2};
+use polars::datatypes::PlSmallStr;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-
-// Re-export the proper CsvLoader
-pub use csv::CsvLoader;
 
 /// Data loader configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,408 +66,6 @@ pub enum LoaderError {
     #[error("Dimension mismatch: {0}")]
     DimensionMismatch(String),
 }
-
-/// Polars loader
-#[cfg(feature = "polars")]
-pub struct PolarsLoader {
-    config: LoaderConfig,
-}
-
-#[cfg(feature = "polars")]
-impl PolarsLoader {
-    pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
-        Ok(PolarsLoader {
-            config: LoaderConfig {
-                dataset_config,
-                ..Default::default()
-            },
-        })
-    }
-
-    /// Load from Polars DataFrame directly
-    pub fn load_dataframe(&self, df: &polars::prelude::DataFrame) -> Result<Dataset> {
-        log::info!("Loading from Polars DataFrame with shape: {:?}", df.shape());
-
-        // Validate DataFrame is not empty
-        if df.height() == 0 {
-            return Err(LightGBMError::data_loading("DataFrame is empty"));
-        }
-
-        // Determine target column
-        let target_col_name = if let Some(ref target_col) = self.config.dataset_config.target_column
-        {
-            target_col.clone()
-        } else {
-            // Default to last column
-            df.get_column_names()
-                .last()
-                .ok_or_else(|| LightGBMError::data_loading("No columns in DataFrame"))?
-                .to_string()
-        };
-
-        // Get feature columns (all except target)
-        let feature_columns: Vec<String> = df
-            .get_column_names()
-            .iter()
-            .filter(|&&col| col != target_col_name.as_str())
-            .map(|&col| col.to_string())
-            .collect();
-
-        if feature_columns.is_empty() {
-            return Err(LightGBMError::data_loading("No feature columns found"));
-        }
-
-        // Extract labels
-        let labels = self.extract_labels_from_dataframe(df, &target_col_name)?;
-
-        // Extract features
-        let features = self.extract_features_from_dataframe(df, &feature_columns)?;
-
-        // Extract weights if specified
-        let weights = if let Some(ref weight_col) = self.config.dataset_config.weight_column {
-            Some(self.extract_weights_from_dataframe(df, weight_col)?)
-        } else {
-            None
-        };
-
-        // Create Dataset
-        Dataset::new(
-            features,
-            labels,
-            weights,
-            None, // groups
-            Some(feature_columns),
-            None, // feature_types - will be inferred
-        )
-    }
-
-    /// Load CSV file using Polars (much faster than standard CSV loader)
-    pub fn load_csv<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-        // TODO: Fix polars API compatibility
-        Err(LightGBMError::not_implemented(
-            "Polars CSV loading temporarily disabled",
-        ))
-    }
-
-    /// Load Parquet file using Polars
-    pub fn load_parquet<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-        // TODO: Fix polars API compatibility
-        Err(LightGBMError::not_implemented(
-            "Polars Parquet loading temporarily disabled",
-        ))
-    }
-
-    /// Extract labels from DataFrame
-    fn extract_labels_from_dataframe(
-        &self,
-        df: &polars::prelude::DataFrame,
-        target_col: &str,
-    ) -> Result<Array1<f32>> {
-        use polars::prelude::*;
-
-        let series = df.column(target_col).map_err(|e| {
-            LightGBMError::data_loading(format!("Target column '{}' not found: {}", target_col, e))
-        })?;
-
-        // Convert to f32 array
-        let labels = match series.dtype() {
-            DataType::Float32 => {
-                let ca = series.f32().map_err(|e| {
-                    LightGBMError::data_loading(format!("Failed to extract f32 labels: {}", e))
-                })?;
-
-                let mut labels_vec = Vec::with_capacity(ca.len());
-                for opt_val in ca.iter() {
-                    labels_vec.push(opt_val.unwrap_or(f32::NAN));
-                }
-                Array1::from_vec(labels_vec)
-            }
-            DataType::Float64 => {
-                let ca = series.f64().map_err(|e| {
-                    LightGBMError::data_loading(format!("Failed to extract f64 labels: {}", e))
-                })?;
-
-                let mut labels_vec = Vec::with_capacity(ca.len());
-                for opt_val in ca.iter() {
-                    labels_vec.push(opt_val.unwrap_or(f64::NAN) as f32);
-                }
-                Array1::from_vec(labels_vec)
-            }
-            DataType::Int32 => {
-                let ca = series.i32().map_err(|e| {
-                    LightGBMError::data_loading(format!("Failed to extract i32 labels: {}", e))
-                })?;
-
-                let mut labels_vec = Vec::with_capacity(ca.len());
-                for opt_val in ca.iter() {
-                    labels_vec.push(opt_val.unwrap_or(0) as f32);
-                }
-                Array1::from_vec(labels_vec)
-            }
-            DataType::Int64 => {
-                let ca = series.i64().map_err(|e| {
-                    LightGBMError::data_loading(format!("Failed to extract i64 labels: {}", e))
-                })?;
-
-                let mut labels_vec = Vec::with_capacity(ca.len());
-                for opt_val in ca.iter() {
-                    labels_vec.push(opt_val.unwrap_or(0) as f32);
-                }
-                Array1::from_vec(labels_vec)
-            }
-            _ => {
-                return Err(LightGBMError::data_loading(format!(
-                    "Unsupported target column type: {:?}",
-                    series.dtype()
-                )));
-            }
-        };
-
-        Ok(labels)
-    }
-
-    /// Extract features from DataFrame
-    fn extract_features_from_dataframe(
-        &self,
-        df: &polars::prelude::DataFrame,
-        feature_cols: &[String],
-    ) -> Result<Array2<f32>> {
-        use polars::prelude::*;
-
-        let num_rows = df.height();
-        let num_features = feature_cols.len();
-        let mut features = Array2::<f32>::zeros((num_rows, num_features));
-
-        for (feat_idx, col_name) in feature_cols.iter().enumerate() {
-            let series = df.column(col_name).map_err(|e| {
-                LightGBMError::data_loading(format!(
-                    "Feature column '{}' not found: {}",
-                    col_name, e
-                ))
-            })?;
-
-            // Convert series to f32 values
-            let values = match series.dtype() {
-                DataType::Float32 => {
-                    let ca = series.f32().map_err(|e| {
-                        LightGBMError::data_loading(format!(
-                            "Failed to extract f32 from {}: {}",
-                            col_name, e
-                        ))
-                    })?;
-
-                    ca.iter()
-                        .map(|opt_val| opt_val.unwrap_or(f32::NAN))
-                        .collect::<Vec<f32>>()
-                }
-                DataType::Float64 => {
-                    let ca = series.f64().map_err(|e| {
-                        LightGBMError::data_loading(format!(
-                            "Failed to extract f64 from {}: {}",
-                            col_name, e
-                        ))
-                    })?;
-
-                    ca.iter()
-                        .map(|opt_val| opt_val.unwrap_or(f64::NAN) as f32)
-                        .collect::<Vec<f32>>()
-                }
-                DataType::Int32 => {
-                    let ca = series.i32().map_err(|e| {
-                        LightGBMError::data_loading(format!(
-                            "Failed to extract i32 from {}: {}",
-                            col_name, e
-                        ))
-                    })?;
-
-                    ca.iter()
-                        .map(|opt_val| opt_val.unwrap_or(0) as f32)
-                        .collect::<Vec<f32>>()
-                }
-                DataType::Int64 => {
-                    let ca = series.i64().map_err(|e| {
-                        LightGBMError::data_loading(format!(
-                            "Failed to extract i64 from {}: {}",
-                            col_name, e
-                        ))
-                    })?;
-
-                    ca.iter()
-                        .map(|opt_val| opt_val.unwrap_or(0) as f32)
-                        .collect::<Vec<f32>>()
-                }
-                DataType::Boolean => {
-                    let ca = series.bool().map_err(|e| {
-                        LightGBMError::data_loading(format!(
-                            "Failed to extract bool from {}: {}",
-                            col_name, e
-                        ))
-                    })?;
-
-                    ca.iter()
-                        .map(|opt_val| if opt_val.unwrap_or(false) { 1.0 } else { 0.0 })
-                        .collect::<Vec<f32>>()
-                }
-                DataType::String => {
-                    // Handle categorical string data - for now, just error
-                    return Err(LightGBMError::data_loading(format!(
-                        "String column '{}' requires encoding. Use preprocessing module first.",
-                        col_name
-                    )));
-                }
-                _ => {
-                    return Err(LightGBMError::data_loading(format!(
-                        "Unsupported feature column type for '{}': {:?}",
-                        col_name,
-                        series.dtype()
-                    )));
-                }
-            };
-
-            // Copy values to features array
-            for (row_idx, &value) in values.iter().enumerate() {
-                features[[row_idx, feat_idx]] = value;
-            }
-        }
-
-        Ok(features)
-    }
-
-    /// Extract weights from DataFrame
-    fn extract_weights_from_dataframe(
-        &self,
-        df: &polars::prelude::DataFrame,
-        weight_col: &str,
-    ) -> Result<Array1<f32>> {
-        use polars::prelude::*;
-
-        let series = df.column(weight_col).map_err(|e| {
-            LightGBMError::data_loading(format!("Weight column '{}' not found: {}", weight_col, e))
-        })?;
-
-        // Convert to f32 array (similar to labels)
-        let weights = match series.dtype() {
-            DataType::Float32 => {
-                let ca = series.f32().map_err(|e| {
-                    LightGBMError::data_loading(format!("Failed to extract f32 weights: {}", e))
-                })?;
-
-                let mut weights_vec = Vec::with_capacity(ca.len());
-                for opt_val in ca.iter() {
-                    weights_vec.push(opt_val.unwrap_or(1.0));
-                }
-                Array1::from_vec(weights_vec)
-            }
-            DataType::Float64 => {
-                let ca = series.f64().map_err(|e| {
-                    LightGBMError::data_loading(format!("Failed to extract f64 weights: {}", e))
-                })?;
-
-                let mut weights_vec = Vec::with_capacity(ca.len());
-                for opt_val in ca.iter() {
-                    weights_vec.push(opt_val.unwrap_or(1.0) as f32);
-                }
-                Array1::from_vec(weights_vec)
-            }
-            _ => {
-                return Err(LightGBMError::data_loading(format!(
-                    "Unsupported weight column type: {:?}",
-                    series.dtype()
-                )));
-            }
-        };
-
-        Ok(weights)
-    }
-}
-
-#[cfg(feature = "polars")]
-impl DataLoader for PolarsLoader {
-    fn load<P: AsRef<Path>>(&self, path: P) -> Result<Dataset> {
-        let path_str = path.as_ref().to_string_lossy();
-
-        // Determine file type and use appropriate loader
-        if path_str.ends_with(".csv") || path_str.ends_with(".tsv") {
-            self.load_csv(path)
-        } else if path_str.ends_with(".parquet") {
-            self.load_parquet(path)
-        } else {
-            Err(LightGBMError::data_loading(format!(
-                "Unsupported file format for Polars loader: {}",
-                path_str
-            )))
-        }
-    }
-
-    fn config(&self) -> &LoaderConfig {
-        &self.config
-    }
-}
-
-/// Arrow loader - Temporarily disabled (uncomment when arrow feature is added to Cargo.toml)
-// #[cfg(feature = "arrow")]
-// pub struct ArrowLoader {
-//     config: LoaderConfig,
-// }
-
-// #[cfg(feature = "arrow")]
-// impl ArrowLoader {
-//     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
-//         Ok(ArrowLoader {
-//             config: LoaderConfig {
-//                 dataset_config,
-//                 ..Default::default()
-//             },
-//         })
-//     }
-//
-//     pub fn load_table(&self, _table: &arrow::array::RecordBatch) -> Result<Dataset> {
-//         // TODO: Implement Arrow loading
-//         Err(LightGBMError::not_implemented("Arrow loading"))
-//     }
-// }
-
-// #[cfg(feature = "arrow")]
-// impl DataLoader for ArrowLoader {
-//     fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-//         // TODO: Implement Arrow file loading
-//         Err(LightGBMError::not_implemented("Arrow file loading"))
-//     }
-//
-//     fn config(&self) -> &LoaderConfig {
-//         &self.config
-//     }
-// }
-
-/// Parquet loader - Temporarily disabled (uncomment when parquet feature is added to Cargo.toml)
-// #[cfg(feature = "parquet")]
-// pub struct ParquetLoader {
-//     config: LoaderConfig,
-// }
-
-// #[cfg(feature = "parquet")]
-// impl ParquetLoader {
-//     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
-//         Ok(ParquetLoader {
-//             config: LoaderConfig {
-//                 dataset_config,
-//                 ..Default::default()
-//             },
-//         })
-//     }
-// }
-
-// #[cfg(feature = "parquet")]
-// impl DataLoader for ParquetLoader {
-//     fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-//         // TODO: Implement Parquet loading
-//         Err(LightGBMError::not_implemented("Parquet loading"))
-//     }
-//
-//     fn config(&self) -> &LoaderConfig {
-//         &self.config
-//     }
-// }
 
 /// Array loader for in-memory data
 pub struct ArrayLoader {
@@ -635,7 +228,7 @@ impl ArrayLoader {
         features_vec: Vec<Vec<f32>>,
         labels_vec: Vec<f32>,
         weights_vec: Option<Vec<f32>>,
-        feature_names: Option<Vec<String>>,
+        feature_names: Option<Vec<PlSmallStr>>,
     ) -> Result<Dataset> {
         if features_vec.is_empty() {
             return Err(LightGBMError::data_loading("Features vector is empty"));
@@ -773,7 +366,7 @@ impl BinaryLoader {
 
 impl DataLoader for BinaryLoader {
     fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-        // TODO: Implement binary loading
+        // TODO: Implement binary loading according to design document (LightGBMError::NotImplemented remains)
         Err(LightGBMError::not_implemented("Binary loading"))
     }
 
@@ -800,7 +393,7 @@ impl MemoryMappedLoader {
 
 impl DataLoader for MemoryMappedLoader {
     fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-        // TODO: Implement memory-mapped loading
+        // TODO: Implement memory-mapped loading according to design document (LightGBMError::NotImplemented remains)
         Err(LightGBMError::not_implemented("Memory-mapped loading"))
     }
 
@@ -820,13 +413,6 @@ mod tests {
         assert_eq!(config.quote_char, '"');
         assert!(config.skip_header);
         assert_eq!(config.encoding, "utf-8");
-    }
-
-    #[test]
-    fn test_csv_loader_creation() {
-        let dataset_config = DatasetConfig::default();
-        let loader = CsvLoader::new(dataset_config).unwrap();
-        assert_eq!(loader.config().delimiter, ',');
     }
 
     #[test]

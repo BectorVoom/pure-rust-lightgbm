@@ -4,15 +4,15 @@
 //! for setting up LightGBM training parameters, device settings, and other
 //! configuration options.
 
-use crate::core::types::*;
 use crate::core::constants::*;
-use crate::core::error::{Result, LightGBMError};
+use crate::core::error::{LightGBMError, Result};
+use crate::core::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Main configuration structure for LightGBM training and prediction.
-/// 
+///
 /// This structure contains all parameters needed to configure a LightGBM
 /// model, including training parameters, regularization settings, device
 /// configuration, and other options.
@@ -310,8 +310,11 @@ impl Config {
         if self.num_threads == 0 {
             // 0 means use all available cores, which is valid
         } else if self.num_threads > num_cpus::get() * 2 {
-            log::warn!("num_threads ({}) is much larger than available cores ({})", 
-                      self.num_threads, num_cpus::get());
+            log::warn!(
+                "num_threads ({}) is much larger than available cores ({})",
+                self.num_threads,
+                num_cpus::get()
+            );
         }
 
         // Validate GPU parameters
@@ -390,7 +393,9 @@ impl Config {
             toml::from_str(&content)
                 .map_err(|e| LightGBMError::config(format!("Failed to parse TOML config: {}", e)))?
         } else {
-            return Err(LightGBMError::config("Unsupported config file format. Use .json or .toml"));
+            return Err(LightGBMError::config(
+                "Unsupported config file format. Use .json or .toml",
+            ));
         };
 
         Ok(config)
@@ -406,7 +411,9 @@ impl Config {
             toml::to_string_pretty(self)
                 .map_err(|e| LightGBMError::config(format!("Failed to serialize to TOML: {}", e)))?
         } else {
-            return Err(LightGBMError::config("Unsupported config file format. Use .json or .toml"));
+            return Err(LightGBMError::config(
+                "Unsupported config file format. Use .json or .toml",
+            ));
         };
 
         std::fs::write(path, content)
@@ -418,23 +425,26 @@ impl Config {
     /// Load configuration from environment variables
     pub fn load_from_environment() -> Result<Self> {
         let mut config = Config::default();
-        
+
         // Load common parameters from environment
         if let Ok(val) = std::env::var("LIGHTGBM_NUM_ITERATIONS") {
-            config.num_iterations = val.parse()
+            config.num_iterations = val
+                .parse()
                 .map_err(|_| LightGBMError::config("Invalid LIGHTGBM_NUM_ITERATIONS"))?;
         }
-        
+
         if let Ok(val) = std::env::var("LIGHTGBM_LEARNING_RATE") {
-            config.learning_rate = val.parse()
+            config.learning_rate = val
+                .parse()
                 .map_err(|_| LightGBMError::config("Invalid LIGHTGBM_LEARNING_RATE"))?;
         }
-        
+
         if let Ok(val) = std::env::var("LIGHTGBM_NUM_LEAVES") {
-            config.num_leaves = val.parse()
+            config.num_leaves = val
+                .parse()
                 .map_err(|_| LightGBMError::config("Invalid LIGHTGBM_NUM_LEAVES"))?;
         }
-        
+
         if let Ok(val) = std::env::var("LIGHTGBM_OBJECTIVE") {
             config.objective = match val.as_str() {
                 "regression" => ObjectiveType::Regression,
@@ -444,7 +454,7 @@ impl Config {
                 _ => return Err(LightGBMError::config("Invalid LIGHTGBM_OBJECTIVE")),
             };
         }
-        
+
         if let Ok(val) = std::env::var("LIGHTGBM_DEVICE_TYPE") {
             config.device_type = match val.as_str() {
                 "cpu" => DeviceType::CPU,
@@ -452,17 +462,19 @@ impl Config {
                 _ => return Err(LightGBMError::config("Invalid LIGHTGBM_DEVICE_TYPE")),
             };
         }
-        
+
         if let Ok(val) = std::env::var("LIGHTGBM_NUM_THREADS") {
-            config.num_threads = val.parse()
+            config.num_threads = val
+                .parse()
                 .map_err(|_| LightGBMError::config("Invalid LIGHTGBM_NUM_THREADS"))?;
         }
-        
+
         if let Ok(val) = std::env::var("LIGHTGBM_RANDOM_SEED") {
-            config.random_seed = val.parse()
+            config.random_seed = val
+                .parse()
                 .map_err(|_| LightGBMError::config("Invalid LIGHTGBM_RANDOM_SEED"))?;
         }
-        
+
         config.validate()?;
         Ok(config)
     }
@@ -470,7 +482,7 @@ impl Config {
     /// Apply environment variable overrides to existing configuration
     pub fn apply_environment_overrides(&mut self) -> Result<()> {
         let env_config = Self::load_from_environment()?;
-        
+
         // Only override non-default values
         if env_config.num_iterations != DEFAULT_NUM_ITERATIONS {
             self.num_iterations = env_config.num_iterations;
@@ -493,7 +505,7 @@ impl Config {
         if env_config.random_seed != DEFAULT_RANDOM_SEED {
             self.random_seed = env_config.random_seed;
         }
-        
+
         self.validate()
     }
 
@@ -507,53 +519,53 @@ impl Config {
         self.max_depth = other.max_depth;
         self.boosting_type = other.boosting_type;
         self.tree_learner = other.tree_learner;
-        
+
         self.lambda_l1 = other.lambda_l1;
         self.lambda_l2 = other.lambda_l2;
         self.min_data_in_leaf = other.min_data_in_leaf;
         self.min_sum_hessian_in_leaf = other.min_sum_hessian_in_leaf;
         self.min_gain_to_split = other.min_gain_to_split;
         self.max_delta_step = other.max_delta_step;
-        
+
         self.feature_fraction = other.feature_fraction;
         self.feature_fraction_bynode = other.feature_fraction_bynode;
         self.bagging_fraction = other.bagging_fraction;
         self.bagging_freq = other.bagging_freq;
         self.bagging_seed = other.bagging_seed;
-        
+
         self.max_bin = other.max_bin;
         self.min_data_per_group = other.min_data_per_group;
         self.cat_smooth = other.cat_smooth;
         self.cat_l2 = other.cat_l2;
         self.max_cat_to_onehot = other.max_cat_to_onehot;
         self.top_k = other.top_k;
-        
+
         self.device_type = other.device_type;
         self.num_threads = other.num_threads;
         self.gpu_platform_id = other.gpu_platform_id;
         self.gpu_device_id = other.gpu_device_id;
         self.gpu_use_dp = other.gpu_use_dp;
-        
+
         self.num_class = other.num_class;
         self.is_unbalance = other.is_unbalance;
         self.scale_pos_weight = other.scale_pos_weight;
-        
+
         self.early_stopping_rounds = other.early_stopping_rounds;
         self.early_stopping_tolerance = other.early_stopping_tolerance;
         self.first_metric_only = other.first_metric_only;
-        
+
         self.metric = other.metric.clone();
         self.metric_freq = other.metric_freq;
         self.is_training_metric = other.is_training_metric;
-        
+
         self.verbosity = other.verbosity;
         self.output_model = other.output_model.clone();
         self.input_model = other.input_model.clone();
         self.save_binary = other.save_binary;
-        
+
         self.random_seed = other.random_seed;
         self.deterministic = other.deterministic;
-        
+
         // Merge optional fields
         if other.max_bin_by_feature.is_some() {
             self.max_bin_by_feature = other.max_bin_by_feature.clone();
@@ -570,7 +582,7 @@ impl Config {
         if other.machine_list_filename.is_some() {
             self.machine_list_filename = other.machine_list_filename.clone();
         }
-        
+
         self.validate()
     }
 
@@ -610,34 +622,49 @@ impl Config {
     /// Get configuration as a parameter map (for debugging/serialization)
     pub fn as_parameter_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        
+
         map.insert("objective".to_string(), self.objective.to_string());
-        map.insert("num_iterations".to_string(), self.num_iterations.to_string());
+        map.insert(
+            "num_iterations".to_string(),
+            self.num_iterations.to_string(),
+        );
         map.insert("learning_rate".to_string(), self.learning_rate.to_string());
         map.insert("num_leaves".to_string(), self.num_leaves.to_string());
         map.insert("max_depth".to_string(), self.max_depth.to_string());
         map.insert("boosting_type".to_string(), self.boosting_type.to_string());
         map.insert("tree_learner".to_string(), self.tree_learner.to_string());
-        
+
         map.insert("lambda_l1".to_string(), self.lambda_l1.to_string());
         map.insert("lambda_l2".to_string(), self.lambda_l2.to_string());
-        map.insert("min_data_in_leaf".to_string(), self.min_data_in_leaf.to_string());
-        map.insert("min_sum_hessian_in_leaf".to_string(), self.min_sum_hessian_in_leaf.to_string());
-        
-        map.insert("feature_fraction".to_string(), self.feature_fraction.to_string());
-        map.insert("bagging_fraction".to_string(), self.bagging_fraction.to_string());
+        map.insert(
+            "min_data_in_leaf".to_string(),
+            self.min_data_in_leaf.to_string(),
+        );
+        map.insert(
+            "min_sum_hessian_in_leaf".to_string(),
+            self.min_sum_hessian_in_leaf.to_string(),
+        );
+
+        map.insert(
+            "feature_fraction".to_string(),
+            self.feature_fraction.to_string(),
+        );
+        map.insert(
+            "bagging_fraction".to_string(),
+            self.bagging_fraction.to_string(),
+        );
         map.insert("bagging_freq".to_string(), self.bagging_freq.to_string());
-        
+
         map.insert("max_bin".to_string(), self.max_bin.to_string());
         map.insert("device_type".to_string(), self.device_type.to_string());
         map.insert("num_threads".to_string(), self.num_threads.to_string());
         map.insert("num_class".to_string(), self.num_class.to_string());
         map.insert("random_seed".to_string(), self.random_seed.to_string());
-        
+
         if let Some(rounds) = self.early_stopping_rounds {
             map.insert("early_stopping_rounds".to_string(), rounds.to_string());
         }
-        
+
         map
     }
 }
@@ -673,7 +700,8 @@ impl ConfigBuilder {
     /// Set the learning rate
     pub fn learning_rate(mut self, rate: f64) -> Self {
         if rate <= 0.0 || rate > 1.0 {
-            self.validation_errors.push("learning_rate must be in range (0.0, 1.0]".to_string());
+            self.validation_errors
+                .push("learning_rate must be in range (0.0, 1.0]".to_string());
         }
         self.config.learning_rate = rate;
         self
@@ -682,7 +710,8 @@ impl ConfigBuilder {
     /// Set the number of leaves
     pub fn num_leaves(mut self, leaves: usize) -> Self {
         if leaves < 2 {
-            self.validation_errors.push("num_leaves must be at least 2".to_string());
+            self.validation_errors
+                .push("num_leaves must be at least 2".to_string());
         }
         self.config.num_leaves = leaves;
         self
@@ -697,7 +726,8 @@ impl ConfigBuilder {
     /// Set L1 regularization parameter
     pub fn lambda_l1(mut self, lambda: f64) -> Self {
         if lambda < 0.0 {
-            self.validation_errors.push("lambda_l1 must be non-negative".to_string());
+            self.validation_errors
+                .push("lambda_l1 must be non-negative".to_string());
         }
         self.config.lambda_l1 = lambda;
         self
@@ -706,7 +736,8 @@ impl ConfigBuilder {
     /// Set L2 regularization parameter
     pub fn lambda_l2(mut self, lambda: f64) -> Self {
         if lambda < 0.0 {
-            self.validation_errors.push("lambda_l2 must be non-negative".to_string());
+            self.validation_errors
+                .push("lambda_l2 must be non-negative".to_string());
         }
         self.config.lambda_l2 = lambda;
         self
@@ -733,7 +764,8 @@ impl ConfigBuilder {
     /// Set minimum data points per leaf
     pub fn min_data_in_leaf(mut self, min_data: DataSize) -> Self {
         if min_data < 1 {
-            self.validation_errors.push("min_data_in_leaf must be at least 1".to_string());
+            self.validation_errors
+                .push("min_data_in_leaf must be at least 1".to_string());
         }
         self.config.min_data_in_leaf = min_data;
         self
@@ -742,7 +774,8 @@ impl ConfigBuilder {
     /// Set feature fraction for sampling
     pub fn feature_fraction(mut self, fraction: f64) -> Self {
         if fraction <= 0.0 || fraction > 1.0 {
-            self.validation_errors.push("feature_fraction must be in range (0.0, 1.0]".to_string());
+            self.validation_errors
+                .push("feature_fraction must be in range (0.0, 1.0]".to_string());
         }
         self.config.feature_fraction = fraction;
         self
@@ -751,7 +784,8 @@ impl ConfigBuilder {
     /// Set bagging fraction for sampling
     pub fn bagging_fraction(mut self, fraction: f64) -> Self {
         if fraction <= 0.0 || fraction > 1.0 {
-            self.validation_errors.push("bagging_fraction must be in range (0.0, 1.0]".to_string());
+            self.validation_errors
+                .push("bagging_fraction must be in range (0.0, 1.0]".to_string());
         }
         self.config.bagging_fraction = fraction;
         self
@@ -766,7 +800,8 @@ impl ConfigBuilder {
     /// Set maximum number of bins
     pub fn max_bin(mut self, max_bin: usize) -> Self {
         if max_bin < 2 {
-            self.validation_errors.push("max_bin must be at least 2".to_string());
+            self.validation_errors
+                .push("max_bin must be at least 2".to_string());
         }
         self.config.max_bin = max_bin;
         self
@@ -775,7 +810,8 @@ impl ConfigBuilder {
     /// Set number of classes for multiclass classification
     pub fn num_class(mut self, num_class: usize) -> Self {
         if num_class < 2 {
-            self.validation_errors.push("num_class must be at least 2".to_string());
+            self.validation_errors
+                .push("num_class must be at least 2".to_string());
         }
         self.config.num_class = num_class;
         self
@@ -790,7 +826,8 @@ impl ConfigBuilder {
     /// Set early stopping tolerance
     pub fn early_stopping_tolerance(mut self, tolerance: f64) -> Self {
         if tolerance < 0.0 {
-            self.validation_errors.push("early_stopping_tolerance must be non-negative".to_string());
+            self.validation_errors
+                .push("early_stopping_tolerance must be non-negative".to_string());
         }
         self.config.early_stopping_tolerance = tolerance;
         self
@@ -804,10 +841,10 @@ impl ConfigBuilder {
 
     /// Set verbosity level
     pub fn verbose(mut self, verbose: bool) -> Self {
-        self.config.verbosity = if verbose { 
-            VerbosityLevel::Info 
-        } else { 
-            VerbosityLevel::Silent 
+        self.config.verbosity = if verbose {
+            VerbosityLevel::Info
+        } else {
+            VerbosityLevel::SILENT
         };
         self
     }
@@ -815,7 +852,7 @@ impl ConfigBuilder {
     /// Create configuration from parameter map (for hyperparameter optimization)
     pub fn from_params(params: &std::collections::HashMap<String, f64>) -> Self {
         let mut builder = Self::new();
-        
+
         for (param, &value) in params {
             match param.as_str() {
                 "learning_rate" => builder = builder.learning_rate(value),
@@ -829,7 +866,7 @@ impl ConfigBuilder {
                 _ => {} // Ignore unknown parameters
             }
         }
-        
+
         builder
     }
 
@@ -887,14 +924,14 @@ mod tests {
     #[test]
     fn test_config_validation() {
         let mut config = Config::default();
-        
+
         // Valid configuration should pass
         assert!(config.validate().is_ok());
-        
+
         // Invalid learning rate should fail
         config.learning_rate = -0.1;
         assert!(config.validate().is_err());
-        
+
         // Invalid num_leaves should fail
         config.learning_rate = 0.1;
         config.num_leaves = 1;
@@ -933,7 +970,7 @@ mod tests {
     fn test_config_parameter_map() {
         let config = Config::default();
         let map = config.as_parameter_map();
-        
+
         assert!(map.contains_key("objective"));
         assert!(map.contains_key("num_iterations"));
         assert!(map.contains_key("learning_rate"));
@@ -943,7 +980,7 @@ mod tests {
     #[test]
     fn test_config_helper_methods() {
         let config = Config::default();
-        
+
         assert_eq!(config.effective_num_threads(), num_cpus::get());
         assert!(!config.is_gpu_enabled());
         assert_eq!(config.num_trees_per_iteration(), 1);
@@ -955,13 +992,13 @@ mod tests {
     fn test_config_merge() {
         let mut config1 = Config::default();
         let mut config2 = Config::default();
-        
+
         config2.learning_rate = 0.05;
         config2.num_leaves = 63;
         config2.objective = ObjectiveType::Binary;
-        
+
         config1.merge(&config2).unwrap();
-        
+
         assert_eq!(config1.learning_rate, 0.05);
         assert_eq!(config1.num_leaves, 63);
         assert_eq!(config1.objective, ObjectiveType::Binary);
@@ -972,7 +1009,7 @@ mod tests {
         let mut config = Config::default();
         config.objective = ObjectiveType::Multiclass;
         config.num_class = 5;
-        
+
         assert!(config.validate().is_ok());
         assert_eq!(config.num_trees_per_iteration(), 5);
         assert_eq!(config.total_num_trees(), config.num_iterations * 5);
