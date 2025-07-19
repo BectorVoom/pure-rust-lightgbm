@@ -966,7 +966,6 @@ impl MissingValueImputer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::Array2;
 
     #[test]
     fn test_missing_value_config_default() {

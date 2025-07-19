@@ -544,10 +544,10 @@ mod tests {
         // Create features where column 0 is clearly numerical (many unique values or non-integers)
         // and column 1 is clearly categorical (few unique integer values)
         let features = Array2::from_shape_vec(
-            (6, 2), 
+            (6, 2),
             vec![
                 1.5, 1.0,   // Row 0: [1.5, 1.0]
-                2.7, 1.0,   // Row 1: [2.7, 1.0] 
+                2.7, 1.0,   // Row 1: [2.7, 1.0]
                 3.2, 2.0,   // Row 2: [3.2, 2.0]
                 4.8, 2.0,   // Row 3: [4.8, 2.0]
                 5.1, 1.0,   // Row 4: [5.1, 1.0]

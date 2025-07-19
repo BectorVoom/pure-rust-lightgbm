@@ -9,7 +9,7 @@
 use lightgbm_rust::*;
 use ndarray::{Array1, Array2};
 use std::fs;
-use std::path::{Path, PathBuf};
+
 use std::time::Instant;
 use tempfile::TempDir;
 
@@ -24,17 +24,17 @@ struct TestResult {
 fn main() -> Result<()> {
     // Initialize the library
     lightgbm_rust::init()?;
-    
+
     println!("Pure Rust LightGBM - Comprehensive Testing Suite");
     println!("================================================");
     println!();
-    
+
     // Display system information
     display_system_info();
     println!();
-    
+
     let mut test_results = Vec::new();
-    
+
     // Run test suites
     test_results.extend(run_basic_functionality_tests()?);
     test_results.extend(run_data_pipeline_tests()?);
@@ -42,22 +42,22 @@ fn main() -> Result<()> {
     test_results.extend(run_integration_tests()?);
     test_results.extend(run_performance_tests()?);
     test_results.extend(run_edge_case_tests()?);
-    
+
     // Generate test report
     generate_test_report(&test_results);
-    
+
     Ok(())
 }
 
 fn display_system_info() {
     println!("System Information:");
     println!("-----------------");
-    
+
     let caps = lightgbm_rust::capabilities();
     println!("Library version: {}", lightgbm_rust::VERSION);
     println!("Capabilities: {}", caps.summary());
     println!("Available CPU cores: {}", num_cpus::get());
-    
+
     #[cfg(feature = "gpu")]
     {
         match gpu::detect_devices() {
@@ -72,7 +72,7 @@ fn display_system_info() {
             }
         }
     }
-    
+
     #[cfg(not(feature = "gpu"))]
     {
         println!("GPU support: Disabled");
@@ -82,141 +82,141 @@ fn display_system_info() {
 fn run_basic_functionality_tests() -> Result<Vec<TestResult>> {
     println!("Running Basic Functionality Tests...");
     println!("-----------------------------------");
-    
+
     let mut results = Vec::new();
-    
+
     // Test 1: Library initialization
     results.push(test_library_initialization());
-    
+
     // Test 2: Configuration system
     results.push(test_configuration_system());
-    
+
     // Test 3: Error handling
     results.push(test_error_handling());
-    
+
     // Test 4: Memory management
     results.push(test_memory_management());
-    
+
     // Test 5: Serialization
     results.push(test_serialization());
-    
+
     Ok(results)
 }
 
 fn run_data_pipeline_tests() -> Result<Vec<TestResult>> {
     println!("\nRunning Data Pipeline Tests...");
     println!("------------------------------");
-    
+
     let mut results = Vec::new();
-    
+
     // Test 1: Dataset creation
     results.push(test_dataset_creation());
-    
+
     // Test 2: CSV loading
     results.push(test_csv_loading());
-    
+
     // Test 3: Polars integration
     results.push(test_polars_integration());
-    
+
     // Test 4: Feature binning
     results.push(test_feature_binning());
-    
+
     // Test 5: Data validation
     results.push(test_data_validation());
-    
+
     // Test 6: Missing value handling
     results.push(test_missing_value_handling());
-    
+
     Ok(results)
 }
 
 fn run_model_interface_tests() -> Result<Vec<TestResult>> {
     println!("\nRunning Model Interface Tests...");
     println!("--------------------------------");
-    
+
     let mut results = Vec::new();
-    
+
     // Test 1: Regressor interface
     results.push(test_regressor_interface());
-    
+
     // Test 2: Classifier interface
     results.push(test_classifier_interface());
-    
+
     // Test 3: Model training interface
     results.push(test_model_training_interface());
-    
+
     // Test 4: Prediction interface
     results.push(test_prediction_interface());
-    
+
     // Test 5: Model persistence
     results.push(test_model_persistence());
-    
+
     Ok(results)
 }
 
 fn run_integration_tests() -> Result<Vec<TestResult>> {
     println!("\nRunning Integration Tests...");
     println!("----------------------------");
-    
+
     let mut results = Vec::new();
-    
+
     // Test 1: Complete regression workflow
     results.push(test_complete_regression_workflow());
-    
+
     // Test 2: Complete classification workflow
     results.push(test_complete_classification_workflow());
-    
+
     // Test 3: Cross-module integration
     results.push(test_cross_module_integration());
-    
+
     // Test 4: Thread safety
     results.push(test_thread_safety());
-    
+
     Ok(results)
 }
 
 fn run_performance_tests() -> Result<Vec<TestResult>> {
     println!("\nRunning Performance Tests...");
     println!("----------------------------");
-    
+
     let mut results = Vec::new();
-    
+
     // Test 1: Large dataset handling
     results.push(test_large_dataset_performance());
-    
+
     // Test 2: Memory efficiency
     results.push(test_memory_efficiency());
-    
+
     // Test 3: Parallel processing
     results.push(test_parallel_processing());
-    
+
     // Test 4: SIMD operations
     results.push(test_simd_operations());
-    
+
     Ok(results)
 }
 
 fn run_edge_case_tests() -> Result<Vec<TestResult>> {
     println!("\nRunning Edge Case Tests...");
     println!("--------------------------");
-    
+
     let mut results = Vec::new();
-    
+
     // Test 1: Empty datasets
     results.push(test_empty_datasets());
-    
+
     // Test 2: Single feature datasets
     results.push(test_single_feature_datasets());
-    
+
     // Test 3: Extreme values
     results.push(test_extreme_values());
-    
+
     // Test 4: Invalid configurations
     results.push(test_invalid_configurations());
-    
+
     // Test 5: Resource limits
     results.push(test_resource_limits());
-    
+
     Ok(results)
 }
 
@@ -225,7 +225,7 @@ fn run_edge_case_tests() -> Result<Vec<TestResult>> {
 fn test_library_initialization() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = match lightgbm_rust::init() {
         Ok(_) => {
             if lightgbm_rust::is_initialized() {
@@ -241,7 +241,7 @@ fn test_library_initialization() -> TestResult {
             false
         }
     };
-    
+
     TestResult {
         name: "Library Initialization".to_string(),
         passed,
@@ -253,7 +253,7 @@ fn test_library_initialization() -> TestResult {
 fn test_configuration_system() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         // Test valid configuration
         let config = ConfigBuilder::new()
@@ -261,17 +261,15 @@ fn test_configuration_system() -> TestResult {
             .learning_rate(0.1)
             .num_iterations(100)
             .build();
-        
+
         match config {
             Ok(config) => {
                 if config.validate().is_ok() {
                     details.push_str("Valid configuration created and validated; ");
-                    
+
                     // Test invalid configuration
-                    let invalid_config = ConfigBuilder::new()
-                        .learning_rate(-0.1)
-                        .build();
-                    
+                    let invalid_config = ConfigBuilder::new().learning_rate(-0.1).build();
+
                     match invalid_config {
                         Err(_) => {
                             details.push_str("Invalid configuration properly rejected");
@@ -293,7 +291,7 @@ fn test_configuration_system() -> TestResult {
             }
         }
     };
-    
+
     TestResult {
         name: "Configuration System".to_string(),
         passed,
@@ -305,31 +303,24 @@ fn test_configuration_system() -> TestResult {
 fn test_error_handling() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         // Test different error types
         let config_error = LightGBMError::config("Test config error");
         let param_error = LightGBMError::invalid_parameter("test_param", "invalid", "reason");
         let not_impl_error = LightGBMError::not_implemented("Test feature");
-        
+
         details.push_str(&format!(
             "Error types created: {} categories",
             [&config_error, &param_error, &not_impl_error].len()
         ));
-        
+
         // Test error propagation
         let features = Array2::zeros((5, 3));
         let labels = Array1::zeros(3); // Wrong size
-        
-        let dataset_result = Dataset::new(
-            features,
-            labels,
-            None,
-            None,
-            None,
-            None,
-        );
-        
+
+        let dataset_result = Dataset::new(features, labels, None, None, None, None);
+
         match dataset_result {
             Err(LightGBMError::DataDimensionMismatch { .. }) => {
                 details.push_str("; Error propagation working correctly");
@@ -345,7 +336,7 @@ fn test_error_handling() -> TestResult {
             }
         }
     };
-    
+
     TestResult {
         name: "Error Handling".to_string(),
         passed,
@@ -357,14 +348,14 @@ fn test_error_handling() -> TestResult {
 fn test_memory_management() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         // Test aligned buffer allocation
         match AlignedBuffer::<f32>::new(1024) {
             Ok(buffer) => {
                 if buffer.is_aligned() && buffer.capacity() == 1024 {
                     details.push_str("Aligned buffer allocation successful; ");
-                    
+
                     // Test memory pool
                     let mut pool: MemoryPool<f32> = MemoryPool::new(1024 * 1024, 10);
                     match pool.allocate::<f32>(256) {
@@ -392,7 +383,7 @@ fn test_memory_management() -> TestResult {
             }
         }
     };
-    
+
     TestResult {
         name: "Memory Management".to_string(),
         passed,
@@ -404,7 +395,7 @@ fn test_memory_management() -> TestResult {
 fn test_serialization() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         let config = ConfigBuilder::new()
             .objective(ObjectiveType::Binary)
@@ -412,7 +403,7 @@ fn test_serialization() -> TestResult {
             .num_iterations(100)
             .build()
             .unwrap();
-        
+
         // Test JSON serialization
         match serde_json::to_string(&config) {
             Ok(json_str) => {
@@ -420,7 +411,7 @@ fn test_serialization() -> TestResult {
                     Ok(deserialized) => {
                         if deserialized.learning_rate == config.learning_rate {
                             details.push_str("JSON serialization working; ");
-                            
+
                             // Test bincode serialization
                             match bincode::serialize(&config) {
                                 Ok(bincode_data) => {
@@ -430,18 +421,24 @@ fn test_serialization() -> TestResult {
                                                 details.push_str("Bincode serialization working");
                                                 true
                                             } else {
-                                                details.push_str("Bincode deserialization data mismatch");
+                                                details.push_str(
+                                                    "Bincode deserialization data mismatch",
+                                                );
                                                 false
                                             }
                                         }
                                         Err(e) => {
-                                            details.push_str(&format!("Bincode deserialization failed: {}", e));
+                                            details.push_str(&format!(
+                                                "Bincode deserialization failed: {}",
+                                                e
+                                            ));
                                             false
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    details.push_str(&format!("Bincode serialization failed: {}", e));
+                                    details
+                                        .push_str(&format!("Bincode serialization failed: {}", e));
                                     false
                                 }
                             }
@@ -462,7 +459,7 @@ fn test_serialization() -> TestResult {
             }
         }
     };
-    
+
     TestResult {
         name: "Serialization".to_string(),
         passed,
@@ -474,26 +471,18 @@ fn test_serialization() -> TestResult {
 fn test_dataset_creation() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         // Create test data
-        let features = Array2::from_shape_vec(
-            (10, 4),
-            (0..40).map(|i| i as f32).collect(),
-        ).unwrap();
+        let features =
+            Array2::from_shape_vec((10, 4), (0..40).map(|i| i as f32).collect()).unwrap();
         let labels = Array1::from_vec((0..10).map(|i| i as f32).collect());
         let weights = Some(Array1::ones(10));
-        
-        match Dataset::new(
-            features,
-            labels,
-            weights,
-            None,
-            None,
-            None,
-        ) {
+
+        match Dataset::new(features, labels, weights, None, None, None) {
             Ok(dataset) => {
-                if dataset.num_data() == 10 && dataset.num_features() == 4 && dataset.has_weights() {
+                if dataset.num_data() == 10 && dataset.num_features() == 4 && dataset.has_weights()
+                {
                     details.push_str(&format!(
                         "Dataset created: {} samples, {} features, with weights",
                         dataset.num_data(),
@@ -511,7 +500,7 @@ fn test_dataset_creation() -> TestResult {
             }
         }
     };
-    
+
     TestResult {
         name: "Dataset Creation".to_string(),
         passed,
@@ -523,15 +512,16 @@ fn test_dataset_creation() -> TestResult {
 fn test_csv_loading() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         let temp_dir = TempDir::new().unwrap();
         let csv_path = temp_dir.path().join("test.csv");
-        
+
         // Create test CSV
-        let csv_content = "feature1,feature2,feature3,target\n1.0,2.0,3.0,6.0\n2.0,3.0,4.0,9.0\n3.0,4.0,5.0,12.0";
+        let csv_content =
+            "feature1,feature2,feature3,target\n1.0,2.0,3.0,6.0\n2.0,3.0,4.0,9.0\n3.0,4.0,5.0,12.0";
         fs::write(&csv_path, csv_content).unwrap();
-        
+
         let config = DatasetConfig::new()
             .with_target_column("target")
             .with_feature_columns(vec![
@@ -539,7 +529,7 @@ fn test_csv_loading() -> TestResult {
                 "feature2".to_string(),
                 "feature3".to_string(),
             ]);
-        
+
         match DatasetFactory::from_csv(&csv_path, config) {
             Ok(dataset) => {
                 if dataset.num_data() == 3 && dataset.num_features() == 3 {
@@ -560,7 +550,7 @@ fn test_csv_loading() -> TestResult {
             }
         }
     };
-    
+
     TestResult {
         name: "CSV Loading".to_string(),
         passed,
@@ -611,13 +601,13 @@ fn test_missing_value_handling() -> TestResult {
 fn test_regressor_interface() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         let config = ConfigBuilder::new()
             .objective(ObjectiveType::Regression)
             .build()
             .unwrap();
-        
+
         let regressor = LGBMRegressor::new(config);
         details.push_str(&format!(
             "Regressor created with objective: {:?}",
@@ -625,7 +615,7 @@ fn test_regressor_interface() -> TestResult {
         ));
         true
     };
-    
+
     TestResult {
         name: "Regressor Interface".to_string(),
         passed,
@@ -637,13 +627,13 @@ fn test_regressor_interface() -> TestResult {
 fn test_classifier_interface() -> TestResult {
     let start = Instant::now();
     let mut details = String::new();
-    
+
     let passed = {
         let config = ConfigBuilder::new()
             .objective(ObjectiveType::Binary)
             .build()
             .unwrap();
-        
+
         let classifier = LGBMClassifier::new(config);
         details.push_str(&format!(
             "Classifier created with objective: {:?}",
@@ -651,7 +641,7 @@ fn test_classifier_interface() -> TestResult {
         ));
         true
     };
-    
+
     TestResult {
         name: "Classifier Interface".to_string(),
         passed,
@@ -675,7 +665,8 @@ fn test_prediction_interface() -> TestResult {
         name: "Prediction Interface".to_string(),
         passed: true,
         duration: std::time::Duration::from_millis(15),
-        details: "Prediction interface placeholder (returns NotImplemented as expected)".to_string(),
+        details: "Prediction interface placeholder (returns NotImplemented as expected)"
+            .to_string(),
     }
 }
 
@@ -810,27 +801,39 @@ fn generate_test_report(results: &[TestResult]) {
     println!("Test Report");
     println!("===========");
     println!();
-    
+
     let total_tests = results.len();
     let passed_tests = results.iter().filter(|r| r.passed).count();
     let failed_tests = total_tests - passed_tests;
-    
+
     let total_duration: std::time::Duration = results.iter().map(|r| r.duration).sum();
-    
+
     println!("Summary:");
     println!("--------");
     println!("Total tests: {}", total_tests);
-    println!("Passed: {} ({}%)", passed_tests, (passed_tests * 100) / total_tests);
-    println!("Failed: {} ({}%)", failed_tests, (failed_tests * 100) / total_tests);
+    println!(
+        "Passed: {} ({}%)",
+        passed_tests,
+        (passed_tests * 100) / total_tests
+    );
+    println!(
+        "Failed: {} ({}%)",
+        failed_tests,
+        (failed_tests * 100) / total_tests
+    );
     println!("Total duration: {:.2}s", total_duration.as_secs_f64());
     println!();
-    
+
     // Detailed results
     println!("Detailed Results:");
     println!("-----------------");
-    
+
     for result in results {
-        let status = if result.passed { "✓ PASS" } else { "✗ FAIL" };
+        let status = if result.passed {
+            "✓ PASS"
+        } else {
+            "✗ FAIL"
+        };
         println!(
             "{:<6} {:<35} ({:.2}ms) - {}",
             status,
@@ -839,15 +842,15 @@ fn generate_test_report(results: &[TestResult]) {
             result.details
         );
     }
-    
+
     println!();
-    
+
     if failed_tests > 0 {
         println!("⚠️  Some tests failed. Review the details above.");
     } else {
         println!("🎉 All tests passed!");
     }
-    
+
     println!();
     println!("Note: Many features are still under development.");
     println!("This test suite validates the current implementation state.");
