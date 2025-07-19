@@ -171,7 +171,7 @@ impl FeatureBinner {
     /// Fit the binner on feature data
     pub fn fit(&mut self, features: &Array2<f32>, feature_types: Option<&[FeatureType]>) -> Result<()> {
         let num_features = features.ncols();
-        let num_samples = features.nrows();
+        let _num_samples = features.nrows();
         
         // Determine feature types
         self.feature_types = match feature_types {

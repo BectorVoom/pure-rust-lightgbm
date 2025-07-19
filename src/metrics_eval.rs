@@ -3,8 +3,7 @@
 //! This module provides evaluation metrics for regression and classification tasks,
 //! including standard metrics like RMSE, MAE, accuracy, precision, recall, F1-score, etc.
 
-use crate::core::types::*;
-use ndarray::{ArrayView1, ArrayView2, Array1};
+use ndarray::{ArrayView1, ArrayView2};
 use serde::{Deserialize, Serialize};
 
 /// Regression evaluation metrics
@@ -57,7 +56,7 @@ pub struct MulticlassMetrics {
 }
 
 /// Evaluate regression metrics
-pub fn evaluate_regression(predictions: &ArrayView1<f32>, true_values: &ArrayView1<f32>) -> RegressionMetrics {
+pub fn evaluate_regression(predictions: &ArrayView1<'_, f32>, true_values: &ArrayView1<'_, f32>) -> RegressionMetrics {
     let n = predictions.len() as f64;
     
     // Calculate basic metrics
@@ -106,9 +105,9 @@ pub fn evaluate_regression(predictions: &ArrayView1<f32>, true_values: &ArrayVie
 
 /// Evaluate binary classification metrics
 pub fn evaluate_binary_classification(
-    class_predictions: &ArrayView1<f32>,
-    prob_predictions: &ArrayView2<f32>,
-    true_labels: &ArrayView1<f32>,
+    class_predictions: &ArrayView1<'_, f32>,
+    prob_predictions: &ArrayView2<'_, f32>,
+    true_labels: &ArrayView1<'_, f32>,
 ) -> ClassificationMetrics {
     let n = class_predictions.len();
     
@@ -158,9 +157,9 @@ pub fn evaluate_binary_classification(
 
 /// Evaluate multiclass classification metrics
 pub fn evaluate_multiclass_classification(
-    class_predictions: &ArrayView1<f32>,
-    prob_predictions: &ArrayView2<f32>,
-    true_labels: &ArrayView1<f32>,
+    class_predictions: &ArrayView1<'_, f32>,
+    prob_predictions: &ArrayView2<'_, f32>,
+    true_labels: &ArrayView1<'_, f32>,
     num_classes: usize,
 ) -> MulticlassMetrics {
     let n = class_predictions.len();
@@ -238,7 +237,7 @@ pub fn evaluate_multiclass_classification(
 }
 
 /// Calculate AUC-ROC (simplified implementation)
-fn calculate_auc_roc(prob_predictions: &ArrayView2<f32>, true_labels: &ArrayView1<f32>) -> f64 {
+fn calculate_auc_roc(prob_predictions: &ArrayView2<'_, f32>, true_labels: &ArrayView1<'_, f32>) -> f64 {
     let n = prob_predictions.nrows();
     if n == 0 || prob_predictions.ncols() < 2 {
         return 0.5; // Random classifier
@@ -286,7 +285,7 @@ fn calculate_auc_roc(prob_predictions: &ArrayView2<f32>, true_labels: &ArrayView
 }
 
 /// Calculate log loss
-fn calculate_log_loss(prob_predictions: &ArrayView2<f32>, true_labels: &ArrayView1<f32>) -> f64 {
+fn calculate_log_loss(prob_predictions: &ArrayView2<'_, f32>, true_labels: &ArrayView1<'_, f32>) -> f64 {
     let n = prob_predictions.nrows();
     if n == 0 || prob_predictions.ncols() < 2 {
         return 0.0;
@@ -311,8 +310,8 @@ fn calculate_log_loss(prob_predictions: &ArrayView2<f32>, true_labels: &ArrayVie
 
 /// Calculate custom metrics
 pub fn calculate_custom_metric(
-    predictions: &ArrayView1<f32>,
-    true_values: &ArrayView1<f32>,
+    predictions: &ArrayView1<'_, f32>,
+    true_values: &ArrayView1<'_, f32>,
     metric_name: &str,
 ) -> f64 {
     match metric_name.to_lowercase().as_str() {

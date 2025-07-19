@@ -404,7 +404,7 @@ impl MissingValueImputer {
     }
 
     /// Detect missing values in feature matrix
-    fn detect_missing_values(&self, features: &ArrayView2<f32>) -> Result<Array2<bool>> {
+    fn detect_missing_values(&self, features: &ArrayView2<'_, f32>) -> Result<Array2<bool>> {
         let (num_samples, num_features) = features.dim();
         let mut missing_mask = Array2::<bool>::from_elem((num_samples, num_features), false);
 
@@ -474,8 +474,8 @@ impl MissingValueImputer {
     /// Calculate feature statistics
     fn calculate_feature_statistics(
         &self,
-        feature_data: &ArrayView1<f32>,
-        missing_mask: &ArrayView1<bool>,
+        feature_data: &ArrayView1<'_, f32>,
+        missing_mask: &ArrayView1<'_, bool>,
     ) -> Result<FeatureStatistics> {
         let valid_values: Vec<f32> = feature_data
             .iter()
@@ -549,7 +549,7 @@ impl MissingValueImputer {
     /// Fit KNN model for a feature
     fn fit_knn_model(
         &self,
-        features: &ArrayView2<f32>,
+        features: &ArrayView2<'_, f32>,
         target_feature: usize,
         k: usize,
     ) -> Result<KNNModel> {

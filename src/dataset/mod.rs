@@ -208,21 +208,21 @@ impl DatasetFactory {
         loader.load_dataframe(df)
     }
 
-    /// Create dataset from Arrow Table
-    #[cfg(feature = "arrow")]
-    pub fn from_arrow(table: &arrow::array::RecordBatch, config: DatasetConfig) -> Result<Dataset> {
-        config.validate()?;
-        let loader = loader::ArrowLoader::new(config.clone())?;
-        loader.load_table(table)
-    }
+    /// Create dataset from Arrow Table - Temporarily disabled (uncomment when arrow feature is added)
+    // #[cfg(feature = "arrow")]
+    // pub fn from_arrow(table: &arrow::array::RecordBatch, config: DatasetConfig) -> Result<Dataset> {
+    //     config.validate()?;
+    //     let loader = loader::ArrowLoader::new(config.clone())?;
+    //     loader.load_table(table)
+    // }
 
-    /// Create dataset from Parquet file
-    #[cfg(feature = "parquet")]
-    pub fn from_parquet<P: AsRef<Path>>(path: P, config: DatasetConfig) -> Result<Dataset> {
-        config.validate()?;
-        let loader = loader::ParquetLoader::new(config.clone())?;
-        loader.load(path)
-    }
+    /// Create dataset from Parquet file - Temporarily disabled (uncomment when parquet feature is added)
+    // #[cfg(feature = "parquet")]
+    // pub fn from_parquet<P: AsRef<Path>>(path: P, config: DatasetConfig) -> Result<Dataset> {
+    //     config.validate()?;
+    //     let loader = loader::ParquetLoader::new(config.clone())?;
+    //     loader.load(path)
+    // }
 
     /// Create dataset from numpy-style arrays
     pub fn from_arrays(
@@ -474,7 +474,7 @@ pub mod utils {
     }
 
     /// Convert dataset to different format
-    pub fn convert_dataset(dataset: &Dataset, format: &str) -> Result<Vec<u8>> {
+    pub fn convert_dataset(_dataset: &Dataset, format: &str) -> Result<Vec<u8>> {
         match format {
             "csv" => {
                 // TODO: Implement CSV conversion

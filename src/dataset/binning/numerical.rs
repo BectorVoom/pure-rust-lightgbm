@@ -138,7 +138,7 @@ impl NumericalBinner {
         bin_upper_bounds.dedup();
         
         // Ensure minimum data per bin
-        let filtered_bounds = self.filter_boundaries_by_min_data(
+        let _filtered_bounds = self.filter_boundaries_by_min_data(
             &bin_upper_bounds,
             &valid_values,
             self.config.min_data_per_bin,

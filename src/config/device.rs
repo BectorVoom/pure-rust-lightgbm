@@ -509,7 +509,7 @@ pub struct PerformanceInfo {
 
 /// Detect CPU instruction set extensions
 fn detect_cpu_extensions() -> CpuExtensions {
-    let mut extensions = CpuExtensions::default();
+    let extensions = CpuExtensions::default();
     
     // Use std::arch to detect CPU features
     #[cfg(target_arch = "x86_64")]

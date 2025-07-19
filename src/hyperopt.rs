@@ -4,7 +4,6 @@
 //! functionality including parameter space definition, optimization configuration,
 //! and optimization algorithms.
 
-use crate::core::types::*;
 use crate::core::error::{Result, LightGBMError};
 use crate::dataset::Dataset;
 use crate::config::Config;

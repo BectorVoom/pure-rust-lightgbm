@@ -6,7 +6,7 @@
 use crate::core::types::*;
 use crate::core::error::{Result, LightGBMError};
 use crate::dataset::{Dataset, DatasetConfig};
-use super::{DataLoader, LoaderConfig, LoaderError};
+use super::{DataLoader, LoaderConfig};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::path::Path;

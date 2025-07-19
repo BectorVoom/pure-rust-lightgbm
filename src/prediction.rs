@@ -6,7 +6,7 @@
 use crate::core::types::*;
 use crate::core::error::{Result, LightGBMError};
 use serde::{Deserialize, Serialize};
-use ndarray::{Array1, Array2, ArrayView2};
+use ndarray::{Array1, ArrayView2};
 
 /// Configuration for prediction settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +84,7 @@ impl Default for PredictionConfig {
 /// Predictor trait for making predictions
 pub trait PredictorTrait {
     /// Make predictions on features
-    fn predict(&self, features: &ArrayView2<f32>) -> Result<Array1<Score>>;
+    fn predict(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>>;
 
     /// Get prediction configuration
     fn config(&self) -> &PredictionConfig;
@@ -103,7 +103,7 @@ impl Predictor {
     }
 
     /// Make predictions on features
-    pub fn predict(&self, _features: &ArrayView2<f32>) -> Result<Array1<Score>> {
+    pub fn predict(&self, _features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         // Placeholder implementation - return zeros for now
         Ok(Array1::zeros(1))
     }
@@ -115,7 +115,7 @@ impl Predictor {
 }
 
 impl PredictorTrait for Predictor {
-    fn predict(&self, features: &ArrayView2<f32>) -> Result<Array1<Score>> {
+    fn predict(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         self.predict(features)
     }
 
@@ -184,8 +184,8 @@ impl HistogramPool {
         &mut self,
         histogram_index: usize,
         _dataset: &crate::dataset::Dataset,
-        _gradients: &ndarray::ArrayView1<Score>,
-        _hessians: &ndarray::ArrayView1<Score>,
+        _gradients: &ndarray::ArrayView1<'_, Score>,
+        _hessians: &ndarray::ArrayView1<'_, Score>,
         _data_indices: &[i32],
         _feature_index: usize,
     ) -> Result<()> {
@@ -231,8 +231,8 @@ impl SplitFinder {
         _histogram_pool: &HistogramPool,
         feature_index: usize,
         data_indices: &[i32],
-        _gradients: &ndarray::ArrayView1<Score>,
-        _hessians: &ndarray::ArrayView1<Score>,
+        _gradients: &ndarray::ArrayView1<'_, Score>,
+        _hessians: &ndarray::ArrayView1<'_, Score>,
     ) -> Result<SplitInfo> {
         // For now, return a dummy split that simulates finding a reasonable split
         // In a complete implementation, this would:

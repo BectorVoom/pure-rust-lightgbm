@@ -366,7 +366,7 @@ fn test_memory_management() -> TestResult {
                     details.push_str("Aligned buffer allocation successful; ");
                     
                     // Test memory pool
-                    let mut pool = MemoryPool::new(1024 * 1024, 10);
+                    let mut pool: MemoryPool<f32> = MemoryPool::new(1024 * 1024, 10);
                     match pool.allocate::<f32>(256) {
                         Ok(handle) => {
                             let stats = pool.stats();

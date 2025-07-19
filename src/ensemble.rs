@@ -109,7 +109,7 @@ impl ModelEnsemble {
     }
 
     /// Make predictions using the ensemble
-    pub fn predict(&self, features: &ArrayView2<f32>) -> Result<Array1<Score>> {
+    pub fn predict(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         match self.config.method {
             EnsembleMethod::Average => self.predict_average(features),
             EnsembleMethod::WeightedAverage => self.predict_weighted_average(features),
@@ -118,7 +118,7 @@ impl ModelEnsemble {
     }
 
     /// Predict using simple averaging
-    fn predict_average(&self, features: &ArrayView2<f32>) -> Result<Array1<Score>> {
+    fn predict_average(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         let num_samples = features.nrows();
         let mut predictions = Array1::zeros(num_samples);
         
@@ -132,7 +132,7 @@ impl ModelEnsemble {
     }
 
     /// Predict using weighted averaging
-    fn predict_weighted_average(&self, features: &ArrayView2<f32>) -> Result<Array1<Score>> {
+    fn predict_weighted_average(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         let weights = self.config.weights.as_ref()
             .ok_or_else(|| LightGBMError::config("Weights required for weighted averaging"))?;
         
@@ -178,12 +178,12 @@ impl ClassificationEnsemble {
     }
 
     /// Make class predictions using the ensemble
-    pub fn predict(&self, _features: &ArrayView2<f32>) -> Result<Array1<f32>> {
+    pub fn predict(&self, _features: &ArrayView2<'_, f32>) -> Result<Array1<f32>> {
         Err(LightGBMError::not_implemented("ClassificationEnsemble::predict"))
     }
 
     /// Make probability predictions using the ensemble
-    pub fn predict_proba(&self, _features: &ArrayView2<f32>) -> Result<Array2<Score>> {
+    pub fn predict_proba(&self, _features: &ArrayView2<'_, f32>) -> Result<Array2<Score>> {
         Err(LightGBMError::not_implemented("ClassificationEnsemble::predict_proba"))
     }
 }

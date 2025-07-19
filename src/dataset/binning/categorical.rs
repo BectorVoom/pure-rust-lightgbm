@@ -172,7 +172,7 @@ pub mod utils {
         sorted_categories.sort_by(|a, b| b.1.cmp(&a.1));
 
         // Take top categories up to max_bins
-        let selected_categories = sorted_categories
+        let _selected_categories = sorted_categories
             .into_iter()
             .take(max_bins)
             .collect::<Vec<_>>();

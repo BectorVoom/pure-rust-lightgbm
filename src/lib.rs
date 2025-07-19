@@ -375,8 +375,49 @@ impl LGBMRegressor {
     }
 
     /// Predict feature contributions (SHAP values)
-    pub fn predict_contrib(&self, _features: &ndarray::ArrayView2<f32>) -> Result<ndarray::Array2<f64>> {
-        Err(LightGBMError::not_implemented("LGBMRegressor::predict_contrib"))
+    pub fn predict_contrib(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array2<f64>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        log::debug!("Calculating SHAP values for {} samples", features.nrows());
+        
+        // Convert ArrayView to owned Array for GBDT interface
+        let features_owned = features.to_owned();
+        model.predict_contrib(&features_owned)
+    }
+    
+    /// Calculate SHAP values for a single sample
+    pub fn predict_contrib_single(&self, features: &[f32]) -> Result<ndarray::Array1<f64>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        model.predict_contrib_single(features)
+    }
+    
+    /// Get a detailed explanation for a single prediction
+    pub fn explain_prediction(&self, features: &[f32]) -> Result<boosting::SHAPExplanation> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        model.explain_prediction(features)
+    }
+    
+    /// Calculate SHAP interaction values between features
+    pub fn predict_contrib_interactions(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array3<f64>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        let features_owned = features.to_owned();
+        model.predict_contrib_interactions(&features_owned)
+    }
+    
+    /// Validate SHAP values for correctness
+    pub fn validate_shap_values(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<boosting::SHAPValidationStats> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        let features_owned = features.to_owned();
+        model.validate_shap_values(&features_owned)
     }
 
     /// Save model to file
@@ -397,9 +438,26 @@ impl LGBMRegressor {
 
     /// Load model from file
     pub fn load_model<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        // For now, return a basic implementation that shows the functionality works
-        log::warn!("Model loading is not yet fully implemented - returning default model");
-        Ok(LGBMRegressor::default())
+        let path = path.as_ref();
+        log::info!("Loading LGBMRegressor model from: {}", path.display());
+        
+        // Read the model file
+        let model_data = std::fs::read_to_string(path)
+            .map_err(|e| LightGBMError::io_error(format!("Failed to read model file: {}", e)))?;
+        
+        // Deserialize the GBDT model
+        let gbdt: boosting::GBDT = serde_json::from_str(&model_data)
+            .map_err(|e| LightGBMError::serialization(format!("Failed to deserialize model: {}", e)))?;
+        
+        // Extract configuration from the loaded model
+        let config = gbdt.config().clone();
+        
+        // Create regressor with loaded model
+        let mut regressor = LGBMRegressor::new(config);
+        regressor.model = Some(gbdt);
+        
+        log::info!("LGBMRegressor model loaded successfully");
+        Ok(regressor)
     }
 }
 
@@ -505,9 +563,26 @@ impl LGBMClassifier {
 
     /// Load model from file
     pub fn load_model<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        // For now, return a basic implementation that shows the functionality works
-        log::warn!("Model loading is not yet fully implemented - returning default model");
-        Ok(LGBMClassifier::default())
+        let path = path.as_ref();
+        log::info!("Loading LGBMClassifier model from: {}", path.display());
+        
+        // Read the model file
+        let model_data = std::fs::read_to_string(path)
+            .map_err(|e| LightGBMError::io_error(format!("Failed to read model file: {}", e)))?;
+        
+        // Deserialize the GBDT model
+        let gbdt: boosting::GBDT = serde_json::from_str(&model_data)
+            .map_err(|e| LightGBMError::serialization(format!("Failed to deserialize model: {}", e)))?;
+        
+        // Extract configuration from the loaded model
+        let config = gbdt.config().clone();
+        
+        // Create classifier with loaded model
+        let mut classifier = LGBMClassifier::new(config);
+        classifier.model = Some(gbdt);
+        
+        log::info!("LGBMClassifier model loaded successfully");
+        Ok(classifier)
     }
     
     /// Get feature importance
@@ -516,6 +591,52 @@ impl LGBMClassifier {
             Some(model) => model.feature_importance(&importance_type),
             None => Err(LightGBMError::training("Model not trained yet. Call fit() first.")),
         }
+    }
+    
+    /// Predict feature contributions (SHAP values) for classification
+    pub fn predict_contrib(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array2<f64>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        log::debug!("Calculating SHAP values for {} samples", features.nrows());
+        
+        // Convert ArrayView to owned Array for GBDT interface
+        let features_owned = features.to_owned();
+        model.predict_contrib(&features_owned)
+    }
+    
+    /// Calculate SHAP values for a single sample (classification)
+    pub fn predict_contrib_single(&self, features: &[f32]) -> Result<ndarray::Array1<f64>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        model.predict_contrib_single(features)
+    }
+    
+    /// Get a detailed explanation for a single classification prediction
+    pub fn explain_prediction(&self, features: &[f32]) -> Result<boosting::SHAPExplanation> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        model.explain_prediction(features)
+    }
+    
+    /// Calculate SHAP interaction values between features (classification)
+    pub fn predict_contrib_interactions(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array3<f64>> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        let features_owned = features.to_owned();
+        model.predict_contrib_interactions(&features_owned)
+    }
+    
+    /// Validate SHAP values for correctness (classification)
+    pub fn validate_shap_values(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<boosting::SHAPValidationStats> {
+        let model = self.model.as_ref()
+            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        
+        let features_owned = features.to_owned();
+        model.validate_shap_values(&features_owned)
     }
 }
 

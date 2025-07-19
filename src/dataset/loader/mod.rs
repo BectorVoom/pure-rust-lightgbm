@@ -5,7 +5,6 @@
 
 pub mod csv;
 
-use crate::core::types::*;
 use crate::core::error::{Result, LightGBMError};
 use crate::dataset::{Dataset, DatasetConfig};
 use ndarray::{Array1, Array2};
@@ -347,70 +346,70 @@ impl DataLoader for PolarsLoader {
     }
 }
 
-/// Arrow loader
-#[cfg(feature = "arrow")]
-pub struct ArrowLoader {
-    config: LoaderConfig,
-}
+/// Arrow loader - Temporarily disabled (uncomment when arrow feature is added to Cargo.toml)
+// #[cfg(feature = "arrow")]
+// pub struct ArrowLoader {
+//     config: LoaderConfig,
+// }
 
-#[cfg(feature = "arrow")]
-impl ArrowLoader {
-    pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
-        Ok(ArrowLoader {
-            config: LoaderConfig {
-                dataset_config,
-                ..Default::default()
-            },
-        })
-    }
-    
-    pub fn load_table(&self, _table: &arrow::array::RecordBatch) -> Result<Dataset> {
-        // TODO: Implement Arrow loading
-        Err(LightGBMError::not_implemented("Arrow loading"))
-    }
-}
+// #[cfg(feature = "arrow")]
+// impl ArrowLoader {
+//     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
+//         Ok(ArrowLoader {
+//             config: LoaderConfig {
+//                 dataset_config,
+//                 ..Default::default()
+//             },
+//         })
+//     }
+//     
+//     pub fn load_table(&self, _table: &arrow::array::RecordBatch) -> Result<Dataset> {
+//         // TODO: Implement Arrow loading
+//         Err(LightGBMError::not_implemented("Arrow loading"))
+//     }
+// }
 
-#[cfg(feature = "arrow")]
-impl DataLoader for ArrowLoader {
-    fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-        // TODO: Implement Arrow file loading
-        Err(LightGBMError::not_implemented("Arrow file loading"))
-    }
-    
-    fn config(&self) -> &LoaderConfig {
-        &self.config
-    }
-}
+// #[cfg(feature = "arrow")]
+// impl DataLoader for ArrowLoader {
+//     fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
+//         // TODO: Implement Arrow file loading
+//         Err(LightGBMError::not_implemented("Arrow file loading"))
+//     }
+//     
+//     fn config(&self) -> &LoaderConfig {
+//         &self.config
+//     }
+// }
 
-/// Parquet loader
-#[cfg(feature = "parquet")]
-pub struct ParquetLoader {
-    config: LoaderConfig,
-}
+/// Parquet loader - Temporarily disabled (uncomment when parquet feature is added to Cargo.toml)
+// #[cfg(feature = "parquet")]
+// pub struct ParquetLoader {
+//     config: LoaderConfig,
+// }
 
-#[cfg(feature = "parquet")]
-impl ParquetLoader {
-    pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
-        Ok(ParquetLoader {
-            config: LoaderConfig {
-                dataset_config,
-                ..Default::default()
-            },
-        })
-    }
-}
+// #[cfg(feature = "parquet")]
+// impl ParquetLoader {
+//     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
+//         Ok(ParquetLoader {
+//             config: LoaderConfig {
+//                 dataset_config,
+//                 ..Default::default()
+//             },
+//         })
+//     }
+// }
 
-#[cfg(feature = "parquet")]
-impl DataLoader for ParquetLoader {
-    fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-        // TODO: Implement Parquet loading
-        Err(LightGBMError::not_implemented("Parquet loading"))
-    }
-    
-    fn config(&self) -> &LoaderConfig {
-        &self.config
-    }
-}
+// #[cfg(feature = "parquet")]
+// impl DataLoader for ParquetLoader {
+//     fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
+//         // TODO: Implement Parquet loading
+//         Err(LightGBMError::not_implemented("Parquet loading"))
+//     }
+//     
+//     fn config(&self) -> &LoaderConfig {
+//         &self.config
+//     }
+// }
 
 /// Array loader for in-memory data
 pub struct ArrayLoader {

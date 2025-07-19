@@ -161,10 +161,16 @@ impl fmt::Display for TreeLearnerType {
 /// Feature importance calculation types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportanceType {
-    /// Split-based importance
+    /// Split-based importance (frequency of splits)
     Split,
-    /// Gain-based importance
+    /// Gain-based importance (sum of gains from splits)
     Gain,
+    /// Coverage-based importance (sum of sample coverage)
+    Coverage,
+    /// Total gain importance (normalized by total feature contribution)
+    TotalGain,
+    /// Permutation importance (decrease in accuracy when feature is permuted)
+    Permutation,
 }
 
 impl Default for ImportanceType {

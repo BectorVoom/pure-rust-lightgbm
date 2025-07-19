@@ -252,7 +252,7 @@ impl Preprocessor {
 
         let features = dataset.features();
         let num_features = dataset.num_features();
-        let num_samples = dataset.num_data();
+        let _num_samples = dataset.num_data();
 
         let mut fitted_params = FittedParams {
             feature_means: HashMap::new(),
@@ -738,8 +738,8 @@ impl Preprocessor {
     /// Calculate Pearson correlation between two feature vectors
     fn calculate_correlation(
         &self,
-        x: &ndarray::ArrayView1<f32>,
-        y: &ndarray::ArrayView1<f32>,
+        x: &ndarray::ArrayView1<'_, f32>,
+        y: &ndarray::ArrayView1<'_, f32>,
     ) -> Result<f64> {
         let n = x.len() as f64;
         if n == 0.0 {
