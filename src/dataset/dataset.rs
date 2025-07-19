@@ -240,10 +240,18 @@ impl Dataset {
         self.bin_mappers.len()
     }
 
-    /// Get preprocessing statistics (placeholder)
+    /// Get preprocessing statistics
     pub fn preprocessing_stats(&self) -> crate::dataset::DatasetStatistics {
-        // Return default statistics for now
-        crate::dataset::DatasetStatistics::default()
+        // Return actual statistics based on the dataset
+        crate::dataset::DatasetStatistics {
+            num_samples: self.num_data(),
+            num_features: self.num_features(),
+            num_classes: self.detect_num_classes(),
+            feature_stats: Vec::new(), // TODO: Implement detailed feature stats if needed
+            missing_counts: Vec::new(), // TODO: Implement missing counts if needed  
+            memory_usage: self.memory_usage(),
+            sparsity: self.calculate_sparsity(),
+        }
     }
 
     /// Get groups view

@@ -332,6 +332,27 @@ impl LightGBMError {
         }
     }
 
+    /// Create a serialization error
+    pub fn serialization<S: Into<String>>(message: S) -> Self {
+        LightGBMError::Serialization {
+            message: message.into(),
+        }
+    }
+
+    /// Create an IO error with custom message
+    pub fn io_error<S: Into<String>>(message: S) -> Self {
+        LightGBMError::IO {
+            source: std::io::Error::new(std::io::ErrorKind::Other, message.into()),
+        }
+    }
+
+    /// Create a model error
+    pub fn model<S: Into<String>>(message: S) -> Self {
+        LightGBMError::Training {
+            message: message.into(),
+        }
+    }
+
     /// Check if this error is recoverable
     pub fn is_recoverable(&self) -> bool {
         match self {

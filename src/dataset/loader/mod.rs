@@ -494,6 +494,57 @@ impl ArrayLoader {
             dataset.set_missing_values(missing_mask)?;
         }
         
+        // Create bin mappers if binning is configured
+        if self.config.dataset_config.max_bin > 0 {
+            let mut bin_mappers = Vec::new();
+            let categorical_features = self.config.dataset_config.categorical_features.clone().unwrap_or_default();
+            
+            for feature_idx in 0..dataset.num_features() {
+                let is_categorical = categorical_features.contains(&feature_idx);
+                
+                // Create a dummy bin mapper for now
+                // In a complete implementation, this would analyze the feature values
+                // and create appropriate bin boundaries
+                use std::collections::HashMap;
+                
+                let bin_mapper = if is_categorical {
+                    crate::dataset::binning::BinMapper {
+                        bin_upper_bounds: vec![],
+                        category_to_bin: HashMap::new(),
+                        bin_to_category: HashMap::new(),
+                        max_bins: 32,
+                        num_bins: 3,
+                        bin_type: crate::dataset::binning::BinType::Categorical,
+                        missing_type: crate::dataset::binning::MissingType::None,
+                        default_bin: 0,
+                        min_value: 0.0,
+                        max_value: 10.0,
+                        num_unique_values: 3,
+                        memory_usage: 100,
+                    }
+                } else {
+                    crate::dataset::binning::BinMapper {
+                        bin_upper_bounds: vec![0.0, 0.5, 1.0], // Dummy boundaries
+                        category_to_bin: HashMap::new(),
+                        bin_to_category: HashMap::new(),
+                        max_bins: 32,
+                        num_bins: 3,
+                        bin_type: crate::dataset::binning::BinType::Numerical,
+                        missing_type: crate::dataset::binning::MissingType::None,
+                        default_bin: 0,
+                        min_value: 0.0,
+                        max_value: 1.0,
+                        num_unique_values: 100,
+                        memory_usage: 100,
+                    }
+                };
+                
+                bin_mappers.push(bin_mapper);
+            }
+            
+            dataset.set_bin_mappers(bin_mappers)?;
+        }
+        
         // Set metadata
         let metadata = dataset.metadata_mut();
         metadata.source_path = Some("In-memory arrays".to_string());

@@ -8,8 +8,10 @@ use crate::core::error::{Result, LightGBMError};
 use crate::core::traits::ObjectiveFunction;
 use crate::dataset::Dataset;
 use crate::config::Config;
+// use crate::io::SerializableModel; // Temporarily disabled
 use serde::{Deserialize, Serialize};
-use ndarray::{Array1, ArrayView1, ArrayViewMut1};
+use ndarray::{Array1, ArrayView1, ArrayViewMut1, s};
+use std::collections::HashMap;
 
 /// Simple decision tree node for GBDT
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,22 +125,27 @@ impl SimpleTree {
 }
 
 /// Gradient Boosting Decision Tree implementation
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GBDT {
     /// Configuration for the GBDT
     config: Config,
     /// Training dataset reference
+    #[serde(skip)]
     train_data: Option<Dataset>,
     /// Current iteration
     current_iteration: usize,
     /// Trained tree models
     models: Vec<SimpleTree>,
     /// Current training scores/predictions
+    #[serde(skip)]
     train_scores: Option<ndarray::Array1<Score>>,
     /// Objective function for gradient computation
+    #[serde(skip)]
     objective_function: Option<Box<dyn ObjectiveFunction>>,
     /// Gradient and hessian buffers
+    #[serde(skip)]
     gradients: Option<ndarray::Array1<Score>>,
+    #[serde(skip)]
     hessians: Option<ndarray::Array1<Score>>,
 }
 
@@ -597,13 +604,57 @@ impl MulticlassObjective {
 impl ObjectiveFunction for MulticlassObjective {
     fn compute_gradients(
         &self,
-        _predictions: &ndarray::ArrayView1<Score>,
-        _labels: &ndarray::ArrayView1<Label>,
-        _weights: Option<&ndarray::ArrayView1<Label>>,
-        _gradients: &mut ndarray::ArrayViewMut1<Score>,
-        _hessians: &mut ndarray::ArrayViewMut1<Score>,
+        predictions: &ndarray::ArrayView1<Score>,
+        labels: &ndarray::ArrayView1<Label>,
+        weights: Option<&ndarray::ArrayView1<Label>>,
+        gradients: &mut ndarray::ArrayViewMut1<Score>,
+        hessians: &mut ndarray::ArrayViewMut1<Score>,
     ) -> Result<()> {
-        Err(LightGBMError::not_implemented("MulticlassObjective::compute_gradients"))
+        let num_data = labels.len();
+        let num_classes = self.num_classes;
+        
+        if predictions.len() != num_data * num_classes {
+            return Err(LightGBMError::dimension_mismatch(
+                format!("Predictions size mismatch for multiclass: expected {}, got {}", 
+                        num_data * num_classes, predictions.len()),
+                predictions.len().to_string(),
+            ));
+        }
+        
+        // For each data point, compute gradients and hessians for all classes
+        for i in 0..num_data {
+            let true_class = labels[i] as usize;
+            let weight = weights.map(|w| w[i]).unwrap_or(1.0);
+            
+            // Get predictions for this data point across all classes
+            let pred_start = i * num_classes;
+            let pred_end = pred_start + num_classes;
+            let pred_slice = predictions.slice(s![pred_start..pred_end]);
+            
+            // Compute softmax probabilities
+            let max_pred = pred_slice.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+            let mut exp_preds = vec![0.0; num_classes];
+            let mut sum_exp = 0.0;
+            
+            for j in 0..num_classes {
+                exp_preds[j] = (pred_slice[j] - max_pred).exp();
+                sum_exp += exp_preds[j];
+            }
+            
+            // Compute gradients and hessians for each class
+            for j in 0..num_classes {
+                let prob = exp_preds[j] / sum_exp;
+                let target = if j == true_class { 1.0 } else { 0.0 };
+                
+                // Gradient: p_j - y_j
+                gradients[pred_start + j] = weight * (prob - target);
+                
+                // Hessian: p_j * (1 - p_j) for cross-entropy
+                hessians[pred_start + j] = weight * prob * (1.0 - prob).max(1e-16);
+            }
+        }
+        
+        Ok(())
     }
 
     fn transform_predictions(&self, _scores: &mut ndarray::ArrayViewMut1<Score>) -> Result<()> {
@@ -627,3 +678,6 @@ impl ObjectiveFunction for MulticlassObjective {
         MetricType::MultiLogloss
     }
 }
+
+// SerializableModel implementation temporarily disabled due to compilation issues
+// impl SerializableModel for GBDT { ... }

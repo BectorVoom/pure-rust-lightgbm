@@ -104,7 +104,7 @@ impl BincodeSerializer {
         // Serialize using bincode
         let bincode_config = self.get_bincode_config();
         let serialized = bincode_config.serialize(&serializable_model)
-            .map_err(|e| SerializationError::SerializationFailed(e.to_string()))?;
+            .map_err(|e| SerializationError::BincodeError(e.to_string()))?;
 
         let serialization_time = start_time.elapsed().as_millis() as u64;
         
@@ -226,7 +226,7 @@ impl BincodeDeserializer {
         // Deserialize using bincode
         let bincode_config = self.get_bincode_config();
         let wrapper: SerializableModelWrapper = bincode_config.deserialize(data)
-            .map_err(|e| SerializationError::DeserializationFailed(e.to_string()))?;
+            .map_err(|e| SerializationError::BincodeError(e.to_string()))?;
 
         // Convert to model
         let model = wrapper.to_model()?;

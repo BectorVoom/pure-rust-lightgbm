@@ -67,10 +67,10 @@ fn test_gbdt_tree_learner_integration() {
     assert_eq!(serial_gbdt.config().tree_learner, TreeLearnerType::Serial);
     assert_eq!(parallel_gbdt.config().tree_learner, TreeLearnerType::Parallel);
     
-    // Test training interface (will return NotImplemented for now)
+    // Test training interface - should work successfully
     let mut serial_gbdt = serial_gbdt;
     let training_result = serial_gbdt.train();
-    assert!(training_result.is_err());
+    assert!(training_result.is_ok());
     
     println!("GBDT-TreeLearner integration test completed");
 }

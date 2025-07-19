@@ -105,7 +105,7 @@ pub enum SerializationError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Bincode error: {0}")]
-    BincodeError(#[from] bincode::Error),
+    BincodeError(String),
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
     #[error("Format detection error: {0}")]
