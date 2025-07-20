@@ -4,8 +4,8 @@
 //! objective functions supported by LightGBM, including regression, binary
 //! classification, multiclass classification, and ranking objectives.
 
+use crate::core::error::{LightGBMError, Result};
 use crate::core::types::*;
-use crate::core::error::{Result, LightGBMError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -263,24 +263,27 @@ impl ObjectiveConfig {
     /// Get the number of model outputs for this objective
     pub fn num_model_outputs(&self) -> usize {
         match self.objective_type {
-            ObjectiveType::Regression |
-            ObjectiveType::Binary |
-            ObjectiveType::Ranking |
-            ObjectiveType::Poisson |
-            ObjectiveType::Gamma |
-            ObjectiveType::Tweedie => 1,
+            ObjectiveType::Regression
+            | ObjectiveType::Binary
+            | ObjectiveType::Ranking
+            | ObjectiveType::Poisson
+            | ObjectiveType::Gamma
+            | ObjectiveType::Tweedie => 1,
             ObjectiveType::Multiclass => self.num_class,
         }
     }
 
     /// Check if this objective requires class weights
     pub fn requires_class_weights(&self) -> bool {
-        matches!(self.objective_type, ObjectiveType::Binary | ObjectiveType::Multiclass)
+        matches!(
+            self.objective_type,
+            ObjectiveType::Binary | ObjectiveType::Multiclass
+        )
     }
 
     /// Check if this objective supports early stopping
     pub fn supports_early_stopping(&self) -> bool {
-        true  // All objectives support early stopping
+        true // All objectives support early stopping
     }
 
     /// Get objective-specific parameter map
@@ -290,15 +293,24 @@ impl ObjectiveConfig {
         map.insert("objective".to_string(), self.objective_type.to_string());
         map.insert("num_class".to_string(), self.num_class.to_string());
         map.insert("is_unbalance".to_string(), self.is_unbalance.to_string());
-        map.insert("scale_pos_weight".to_string(), self.scale_pos_weight.to_string());
+        map.insert(
+            "scale_pos_weight".to_string(),
+            self.scale_pos_weight.to_string(),
+        );
         map.insert("sigmoid".to_string(), self.sigmoid.to_string());
 
         if self.objective_type == ObjectiveType::Tweedie {
-            map.insert("tweedie_variance_power".to_string(), self.tweedie_variance_power.to_string());
+            map.insert(
+                "tweedie_variance_power".to_string(),
+                self.tweedie_variance_power.to_string(),
+            );
         }
 
         if self.objective_type == ObjectiveType::Poisson {
-            map.insert("poisson_max_delta_step".to_string(), self.poisson_max_delta_step.to_string());
+            map.insert(
+                "poisson_max_delta_step".to_string(),
+                self.poisson_max_delta_step.to_string(),
+            );
         }
 
         // Add custom parameters
@@ -361,7 +373,9 @@ impl ObjectiveFunction for RegressionObjective {
 
     fn validate_config(&self, config: &ObjectiveConfig) -> Result<()> {
         if config.objective_type != ObjectiveType::Regression {
-            return Err(LightGBMError::config("Invalid objective type for regression"));
+            return Err(LightGBMError::config(
+                "Invalid objective type for regression",
+            ));
         }
         config.validate()
     }
@@ -382,11 +396,19 @@ impl ObjectiveFunction for RegressionObjective {
         gradients: &mut [f64],
         hessians: &mut [f64],
     ) -> Result<()> {
-        if predictions.len() != labels.len() || gradients.len() != predictions.len() || hessians.len() != predictions.len() {
+        if predictions.len() != labels.len()
+            || gradients.len() != predictions.len()
+            || hessians.len() != predictions.len()
+        {
             return Err(LightGBMError::dimension_mismatch(
                 "predictions, labels, gradients, and hessians must have the same length",
-                format!("predictions: {}, labels: {}, gradients: {}, hessians: {}",
-                       predictions.len(), labels.len(), gradients.len(), hessians.len()),
+                format!(
+                    "predictions: {}, labels: {}, gradients: {}, hessians: {}",
+                    predictions.len(),
+                    labels.len(),
+                    gradients.len(),
+                    hessians.len()
+                ),
             ));
         }
 
@@ -401,11 +423,13 @@ impl ObjectiveFunction for RegressionObjective {
 }
 
 /// Binary classification objective function
+#[derive(Debug)]
 pub struct BinaryObjective {
     config: ObjectiveConfig,
 }
 
 impl BinaryObjective {
+    /// Create a new binary classification objective function
     pub fn new(config: ObjectiveConfig) -> Result<Self> {
         config.validate()?;
         Ok(BinaryObjective { config })
@@ -427,7 +451,9 @@ impl ObjectiveFunction for BinaryObjective {
 
     fn validate_config(&self, config: &ObjectiveConfig) -> Result<()> {
         if config.objective_type != ObjectiveType::Binary {
-            return Err(LightGBMError::config("Invalid objective type for binary classification"));
+            return Err(LightGBMError::config(
+                "Invalid objective type for binary classification",
+            ));
         }
         config.validate()
     }
@@ -438,7 +464,8 @@ impl ObjectiveFunction for BinaryObjective {
 
     fn transform_predictions(&self, raw_scores: &[f64]) -> Result<Vec<f64>> {
         // Sigmoid transformation
-        let predictions = raw_scores.iter()
+        let predictions = raw_scores
+            .iter()
             .map(|&score| 1.0 / (1.0 + (-score * self.config.sigmoid).exp()))
             .collect();
         Ok(predictions)
@@ -451,11 +478,19 @@ impl ObjectiveFunction for BinaryObjective {
         gradients: &mut [f64],
         hessians: &mut [f64],
     ) -> Result<()> {
-        if predictions.len() != labels.len() || gradients.len() != predictions.len() || hessians.len() != predictions.len() {
+        if predictions.len() != labels.len()
+            || gradients.len() != predictions.len()
+            || hessians.len() != predictions.len()
+        {
             return Err(LightGBMError::dimension_mismatch(
                 "predictions, labels, gradients, and hessians must have the same length",
-                format!("predictions: {}, labels: {}, gradients: {}, hessians: {}",
-                       predictions.len(), labels.len(), gradients.len(), hessians.len()),
+                format!(
+                    "predictions: {}, labels: {}, gradients: {}, hessians: {}",
+                    predictions.len(),
+                    labels.len(),
+                    gradients.len(),
+                    hessians.len()
+                ),
             ));
         }
 
@@ -467,7 +502,11 @@ impl ObjectiveFunction for BinaryObjective {
 
             // Apply class weight scaling
             if self.config.is_unbalance {
-                let weight = if labels[i] > 0.5 { self.config.scale_pos_weight } else { 1.0 };
+                let weight = if labels[i] > 0.5 {
+                    self.config.scale_pos_weight
+                } else {
+                    1.0
+                };
                 gradients[i] *= weight;
                 hessians[i] *= weight;
             }
@@ -483,6 +522,7 @@ pub struct MulticlassObjective {
 }
 
 impl MulticlassObjective {
+    /// Create a new multiclass classification objective function
     pub fn new(config: ObjectiveConfig) -> Result<Self> {
         config.validate()?;
         Ok(MulticlassObjective { config })
@@ -504,7 +544,9 @@ impl ObjectiveFunction for MulticlassObjective {
 
     fn validate_config(&self, config: &ObjectiveConfig) -> Result<()> {
         if config.objective_type != ObjectiveType::Multiclass {
-            return Err(LightGBMError::config("Invalid objective type for multiclass classification"));
+            return Err(LightGBMError::config(
+                "Invalid objective type for multiclass classification",
+            ));
         }
         config.validate()
     }
@@ -527,7 +569,8 @@ impl ObjectiveFunction for MulticlassObjective {
             let max_score = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
             // Calculate softmax
-            let exp_scores: Vec<f64> = scores.iter()
+            let exp_scores: Vec<f64> = scores
+                .iter()
                 .map(|&score| (score - max_score).exp())
                 .collect();
             let sum_exp: f64 = exp_scores.iter().sum();
@@ -549,11 +592,19 @@ impl ObjectiveFunction for MulticlassObjective {
     ) -> Result<()> {
         let num_samples = predictions.len() / self.config.num_class;
 
-        if labels.len() != num_samples || gradients.len() != predictions.len() || hessians.len() != predictions.len() {
+        if labels.len() != num_samples
+            || gradients.len() != predictions.len()
+            || hessians.len() != predictions.len()
+        {
             return Err(LightGBMError::dimension_mismatch(
                 "Invalid dimensions for multiclass gradient calculation",
-                format!("predictions: {}, labels: {}, gradients: {}, hessians: {}",
-                       predictions.len(), labels.len(), gradients.len(), hessians.len()),
+                format!(
+                    "predictions: {}, labels: {}, gradients: {}, hessians: {}",
+                    predictions.len(),
+                    labels.len(),
+                    gradients.len(),
+                    hessians.len()
+                ),
             ));
         }
 
@@ -566,7 +617,8 @@ impl ObjectiveFunction for MulticlassObjective {
 
             // Calculate softmax probabilities
             let max_score = scores.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-            let exp_scores: Vec<f64> = scores.iter()
+            let exp_scores: Vec<f64> = scores
+                .iter()
                 .map(|&score| (score - max_score).exp())
                 .collect();
             let sum_exp: f64 = exp_scores.iter().sum();
@@ -590,7 +642,10 @@ pub fn create_objective_function(config: &ObjectiveConfig) -> Result<Box<dyn Obj
         ObjectiveType::Regression => Ok(Box::new(RegressionObjective)),
         ObjectiveType::Binary => Ok(Box::new(BinaryObjective::new(config.clone())?)),
         ObjectiveType::Multiclass => Ok(Box::new(MulticlassObjective::new(config.clone())?)),
-        _ => Err(LightGBMError::not_implemented(format!("Objective type {:?}", config.objective_type))),
+        _ => Err(LightGBMError::not_implemented(format!(
+            "Objective type {:?}",
+            config.objective_type
+        ))),
     }
 }
 
@@ -645,7 +700,9 @@ mod tests {
         let mut gradients = [0.0; 3];
         let mut hessians = [0.0; 3];
 
-        objective.calculate_gradients_hessians(&predictions, &labels, &mut gradients, &mut hessians).unwrap();
+        objective
+            .calculate_gradients_hessians(&predictions, &labels, &mut gradients, &mut hessians)
+            .unwrap();
 
         assert_eq!(gradients[0], -0.5);
         assert_eq!(gradients[1], -0.5);
@@ -681,7 +738,7 @@ mod tests {
         assert_eq!(objective.num_model_outputs(), 3);
         assert!(objective.requires_class_weights());
 
-        let predictions = [1.0, 2.0, 0.0];  // One sample with 3 classes
+        let predictions = [1.0, 2.0, 0.0]; // One sample with 3 classes
         let transformed = objective.transform_predictions(&predictions).unwrap();
 
         // Check that probabilities sum to 1

@@ -3,14 +3,14 @@
 //! This module provides gradient boosting implementations including
 //! GBDT algorithm, tree learners, and ensemble management.
 
-use crate::core::types::*;
-use crate::core::error::{Result, LightGBMError};
-use crate::core::traits::ObjectiveFunction;
-use crate::dataset::Dataset;
 use crate::config::Config;
+use crate::core::error::{LightGBMError, Result};
+use crate::core::traits::ObjectiveFunction;
+use crate::core::types::*;
+use crate::dataset::Dataset;
 // use crate::io::SerializableModel; // Temporarily disabled
+use ndarray::{s, Array1};
 use serde::{Deserialize, Serialize};
-use ndarray::{Array1, s};
 
 /// Simple decision tree node for GBDT
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +99,11 @@ impl SimpleTree {
     }
 
     /// Calculate feature importance for this tree with enhanced algorithms
-    pub fn feature_importance(&self, num_features: usize, importance_type: &ImportanceType) -> Array1<f64> {
+    pub fn feature_importance(
+        &self,
+        num_features: usize,
+        importance_type: &ImportanceType,
+    ) -> Array1<f64> {
         let mut importance = Array1::zeros(num_features);
 
         match importance_type {
@@ -156,7 +160,8 @@ impl SimpleTree {
                         let feature_idx = node.feature_index as usize;
                         if feature_idx < num_features {
                             // Use gain weighted by sample coverage as proxy for permutation importance
-                            let permutation_proxy = node.split_gain * (node.sample_count as f64).sqrt();
+                            let permutation_proxy =
+                                node.split_gain * (node.sample_count as f64).sqrt();
                             importance[feature_idx] += permutation_proxy;
                         }
                     }
@@ -184,7 +189,7 @@ impl SimpleTree {
                     self.feature_importance(num_features, &ImportanceType::Gain)
                 }
             }
-            _ => self.feature_importance(num_features, importance_type)
+            _ => self.feature_importance(num_features, importance_type),
         }
     }
 
@@ -207,9 +212,8 @@ impl SimpleTree {
         // For each feature, permute it and measure performance drop
         for feature_idx in 0..num_features {
             if feature_idx < features.ncols() {
-                let permuted_score = self.calculate_permuted_performance(
-                    features, labels, feature_idx
-                );
+                let permuted_score =
+                    self.calculate_permuted_performance(features, labels, feature_idx);
 
                 // Importance is the drop in performance when feature is permuted
                 let performance_drop = baseline_score - permuted_score;
@@ -310,18 +314,61 @@ impl SimpleTree {
         base_value: f64,
         path_contribution: f64,
     ) {
+        self.tree_shap_recursive_with_path(
+            node_idx,
+            features,
+            shap_values,
+            path_prob,
+            base_value,
+            path_contribution,
+            &mut Vec::new(),
+        );
+    }
+
+    /// TreeSHAP implementation with path tracking for proper leaf contribution attribution
+    fn tree_shap_recursive_with_path(
+        &self,
+        node_idx: usize,
+        features: &[f32],
+        shap_values: &mut ndarray::Array1<f64>,
+        path_prob: f64,
+        base_value: f64,
+        path_contribution: f64,
+        path_features: &mut Vec<(usize, f64)>,
+    ) {
         if node_idx >= self.nodes.len() {
             return;
         }
 
         let node = &self.nodes[node_idx];
 
-        // If this is a leaf node, distribute the contribution
+        // If this is a leaf node, distribute the contribution among path features
         if node.feature_index < 0 {
             let leaf_contribution = node.leaf_value - base_value - path_contribution;
-            // TODO: Implement SHAP value attribution - leaf_contribution calculated but not used for feature importance
-            // For leaves, we don't attribute to any specific feature
-            // The leaf contribution represents the base adjustment
+
+            // Distribute leaf contribution among features in the path
+            if !path_features.is_empty() && leaf_contribution.abs() > 1e-10 {
+                let total_path_importance: f64 = path_features
+                    .iter()
+                    .map(|(_, importance)| importance.abs())
+                    .sum();
+
+                if total_path_importance > 1e-10 {
+                    // Distribute proportionally based on path importance
+                    for &(feature_idx, importance) in path_features.iter() {
+                        let attribution_weight = importance.abs() / total_path_importance;
+                        let feature_attribution =
+                            leaf_contribution * attribution_weight * importance.signum();
+                        shap_values[feature_idx] += path_prob * feature_attribution;
+                    }
+                } else {
+                    // If no clear importance pattern, distribute equally among path features
+                    let equal_attribution = leaf_contribution / path_features.len() as f64;
+                    for &(feature_idx, _) in path_features.iter() {
+                        shap_values[feature_idx] += path_prob * equal_attribution;
+                    }
+                }
+            }
             return;
         }
 
@@ -337,8 +384,16 @@ impl SimpleTree {
         let goes_left = feature_value <= threshold;
 
         // Get child nodes
-        let left_idx = if node.left_child >= 0 { node.left_child as usize } else { node_idx };
-        let right_idx = if node.right_child >= 0 { node.right_child as usize } else { node_idx };
+        let left_idx = if node.left_child >= 0 {
+            node.left_child as usize
+        } else {
+            node_idx
+        };
+        let right_idx = if node.right_child >= 0 {
+            node.right_child as usize
+        } else {
+            node_idx
+        };
 
         if goes_left && left_idx < self.nodes.len() {
             // Sample goes left - compute contribution difference
@@ -347,17 +402,24 @@ impl SimpleTree {
             let contribution_diff = left_value - right_value;
 
             // Attribute the contribution to the splitting feature
-            shap_values[feature_idx] += path_prob * contribution_diff * 0.5; // Simplified attribution
+            shap_values[feature_idx] += path_prob * contribution_diff * 0.5; // Direct attribution for split decision
+
+            // Add this feature to the path for leaf attribution
+            path_features.push((feature_idx, contribution_diff));
 
             // Continue down the left path
-            self.tree_shap_recursive(
+            self.tree_shap_recursive_with_path(
                 left_idx,
                 features,
                 shap_values,
                 path_prob,
                 base_value,
                 path_contribution + contribution_diff,
+                path_features,
             );
+
+            // Remove feature from path when backtracking
+            path_features.pop();
         } else if !goes_left && right_idx < self.nodes.len() {
             // Sample goes right - compute contribution difference
             let left_value = self.get_subtree_value(left_idx);
@@ -365,17 +427,24 @@ impl SimpleTree {
             let contribution_diff = right_value - left_value;
 
             // Attribute the contribution to the splitting feature
-            shap_values[feature_idx] += path_prob * contribution_diff * 0.5; // Simplified attribution
+            shap_values[feature_idx] += path_prob * contribution_diff * 0.5; // Direct attribution for split decision
+
+            // Add this feature to the path for leaf attribution
+            path_features.push((feature_idx, contribution_diff));
 
             // Continue down the right path
-            self.tree_shap_recursive(
+            self.tree_shap_recursive_with_path(
                 right_idx,
                 features,
                 shap_values,
                 path_prob,
                 base_value,
                 path_contribution + contribution_diff,
+                path_features,
             );
+
+            // Remove feature from path when backtracking
+            path_features.pop();
         }
     }
 
@@ -393,8 +462,16 @@ impl SimpleTree {
         }
 
         // For internal nodes, return weighted average of children
-        let left_idx = if node.left_child >= 0 { node.left_child as usize } else { node_idx };
-        let right_idx = if node.right_child >= 0 { node.right_child as usize } else { node_idx };
+        let left_idx = if node.left_child >= 0 {
+            node.left_child as usize
+        } else {
+            node_idx
+        };
+        let right_idx = if node.right_child >= 0 {
+            node.right_child as usize
+        } else {
+            node_idx
+        };
 
         if left_idx < self.nodes.len() && right_idx < self.nodes.len() {
             let left_samples = self.nodes[left_idx].sample_count as f64;
@@ -455,7 +532,13 @@ impl SimpleTree {
         let mut interaction_strength = 0.0;
         let mut path_count = 0.0;
 
-        self.compute_path_interactions(0, feature_i, feature_j, &mut interaction_strength, &mut path_count);
+        self.compute_path_interactions(
+            0,
+            feature_i,
+            feature_j,
+            &mut interaction_strength,
+            &mut path_count,
+        );
 
         if path_count > 0.0 {
             interaction_strength / path_count
@@ -597,7 +680,11 @@ impl FeatureImportanceStats {
     }
 
     /// Get the top N most important features for a given importance type
-    pub fn get_top_features(&self, importance_type: &ImportanceType, n: usize) -> Vec<(usize, f64)> {
+    pub fn get_top_features(
+        &self,
+        importance_type: &ImportanceType,
+        n: usize,
+    ) -> Vec<(usize, f64)> {
         let importance = self.get_importance(importance_type);
         let mut feature_scores: Vec<(usize, f64)> = importance
             .iter()
@@ -660,7 +747,8 @@ impl FeatureImportanceStats {
             values[values.len() / 2]
         };
 
-        let variance = values.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
+        let variance =
+            values.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
         let std_dev = variance.sqrt();
 
         ImportanceSummary {
@@ -776,7 +864,8 @@ impl SHAPExplanation {
         let max = sorted_values[sorted_values.len() - 1];
         let mean = values.iter().sum::<f64>() / values.len() as f64;
         let median = if sorted_values.len() % 2 == 0 {
-            (sorted_values[sorted_values.len() / 2 - 1] + sorted_values[sorted_values.len() / 2]) / 2.0
+            (sorted_values[sorted_values.len() / 2 - 1] + sorted_values[sorted_values.len() / 2])
+                / 2.0
         } else {
             sorted_values[sorted_values.len() / 2]
         };
@@ -947,17 +1036,28 @@ impl GBDT {
 
     /// Train the GBDT model
     pub fn train(&mut self) -> Result<()> {
-        log::info!("Starting GBDT training with {} iterations", self.config.num_iterations);
+        log::info!(
+            "Starting GBDT training with {} iterations",
+            self.config.num_iterations
+        );
 
         // Get dataset info first
-        let (num_data, num_features, base_prediction) = { // TODO: Implement data loading functionality - num_data and num_features currently unused
-            let train_data = self.train_data.as_ref()
+        let (_num_data, _num_features, base_prediction) = {
+            // TODO: Implement data loading functionality - num_data and num_features currently unused
+            // These should be used for validation and memory allocation
+            let train_data = self
+                .train_data
+                .as_ref()
                 .ok_or_else(|| LightGBMError::training("No training data available"))?;
 
             let num_data = train_data.num_data();
             let num_features = train_data.num_features();
 
-            log::info!("Training data: {} samples, {} features", num_data, num_features);
+            log::info!(
+                "Training data: {} samples, {} features",
+                num_data,
+                num_features
+            );
 
             // Initialize base prediction (mean of labels for regression, log-odds for classification)
             let base_prediction = self.compute_base_prediction(train_data)?;
@@ -972,7 +1072,9 @@ impl GBDT {
         }
 
         // Initialize validation scores if validation data is provided
-        if let Some(ref valid_data) = self.valid_data { // TODO: Implement validation logic - valid_data currently unused for evaluation
+        if let Some(ref _valid_data) = self.valid_data {
+            // TODO: Implement validation logic - valid_data currently unused for evaluation
+            // This should compute validation predictions and update validation scores
             if let Some(ref mut valid_scores) = self.valid_scores {
                 valid_scores.fill(base_prediction);
             }
@@ -980,7 +1082,11 @@ impl GBDT {
 
         // Training loop
         for iteration in 0..self.config.num_iterations {
-            log::info!("Training iteration {}/{}", iteration + 1, self.config.num_iterations);
+            log::info!(
+                "Training iteration {}/{}",
+                iteration + 1,
+                self.config.num_iterations
+            );
 
             // Compute gradients and hessians
             self.compute_gradients()?;
@@ -991,10 +1097,15 @@ impl GBDT {
                 let h_sum: f64 = hessians.iter().map(|&h| h as f64).sum();
                 let g_mean = g_sum / gradients.len() as f64;
                 let h_mean = h_sum / hessians.len() as f64;
-                log::debug!("After compute_gradients: sum_g={:.6}, sum_h={:.6}, mean_g={:.6}, mean_h={:.6}", 
-                           g_sum, h_sum, g_mean, h_mean);
-                
-                // Check current predictions 
+                log::debug!(
+                    "After compute_gradients: sum_g={:.6}, sum_h={:.6}, mean_g={:.6}, mean_h={:.6}",
+                    g_sum,
+                    h_sum,
+                    g_mean,
+                    h_mean
+                );
+
+                // Check current predictions
                 if let Some(ref scores) = self.train_scores {
                     let scores_sample: Vec<f32> = scores.iter().take(5).cloned().collect();
                     log::debug!("Current predictions sample: {:?}", scores_sample);
@@ -1003,13 +1114,21 @@ impl GBDT {
 
             // Train a tree on gradients/hessians
             let tree = self.train_tree()?;
-            
+
             // Debug: Check tree structure
-            log::debug!("Trained tree: {} nodes, {} leaves", tree.nodes.len(), tree.num_leaves);
+            log::debug!(
+                "Trained tree: {} nodes, {} leaves",
+                tree.nodes.len(),
+                tree.num_leaves
+            );
             if !tree.nodes.is_empty() {
                 let root = &tree.nodes[0];
-                log::debug!("Root node: feature={}, threshold={:.6}, leaf_value={:.6}", 
-                           root.feature_index, root.threshold, root.leaf_value);
+                log::debug!(
+                    "Root node: feature={}, threshold={:.6}, leaf_value={:.6}",
+                    root.feature_index,
+                    root.threshold,
+                    root.leaf_value
+                );
             }
 
             // Update training scores
@@ -1040,15 +1159,22 @@ impl GBDT {
             }
         }
 
-        log::info!("Training completed. Final model has {} trees", self.models.len());
+        log::info!(
+            "Training completed. Final model has {} trees",
+            self.models.len()
+        );
         Ok(())
     }
 
     /// Update validation scores with new tree predictions
     fn update_validation_scores(&mut self, tree: &SimpleTree) -> Result<()> {
-        let valid_data = self.valid_data.as_ref()
+        let valid_data = self
+            .valid_data
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No validation data available"))?;
-        let valid_scores = self.valid_scores.as_mut()
+        let valid_scores = self
+            .valid_scores
+            .as_mut()
             .ok_or_else(|| LightGBMError::training("No validation scores available"))?;
 
         let features = valid_data.features();
@@ -1085,10 +1211,12 @@ impl GBDT {
                 };
 
                 let is_better = if early_stopping.higher_is_better {
-                    self.training_history.best_score
+                    self.training_history
+                        .best_score
                         .map_or(true, |best| current_score > best + early_stopping.min_delta)
                 } else {
-                    self.training_history.best_score
+                    self.training_history
+                        .best_score
                         .map_or(true, |best| current_score < best - early_stopping.min_delta)
                 };
 
@@ -1104,9 +1232,13 @@ impl GBDT {
 
     /// Calculate training loss
     fn calculate_training_loss(&self) -> Result<f64> {
-        let train_data = self.train_data.as_ref()
+        let train_data = self
+            .train_data
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No training data available"))?;
-        let train_scores = self.train_scores.as_ref()
+        let train_scores = self
+            .train_scores
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No training scores available"))?;
 
         let labels = train_data.labels();
@@ -1116,9 +1248,13 @@ impl GBDT {
 
     /// Calculate validation loss
     fn calculate_validation_loss(&self) -> Result<f64> {
-        let valid_data = self.valid_data.as_ref()
+        let valid_data = self
+            .valid_data
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No validation data available"))?;
-        let valid_scores = self.valid_scores.as_ref()
+        let valid_scores = self
+            .valid_scores
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No validation scores available"))?;
 
         let labels = valid_data.labels();
@@ -1127,24 +1263,30 @@ impl GBDT {
     }
 
     /// Calculate loss for given predictions and labels
-    fn calculate_loss(&self, predictions: &Array1<f32>, labels: ndarray::ArrayView1<'_, f32>) -> Result<f64> {
+    fn calculate_loss(
+        &self,
+        predictions: &Array1<f32>,
+        labels: ndarray::ArrayView1<'_, f32>,
+    ) -> Result<f64> {
         if predictions.len() != labels.len() {
             return Err(LightGBMError::dimension_mismatch(
                 format!("predictions: {}", predictions.len()),
-                format!("labels: {}", labels.len())
+                format!("labels: {}", labels.len()),
             ));
         }
 
         match self.config.objective {
             ObjectiveType::Regression => {
                 // Mean squared error
-                let mse: f64 = predictions.iter()
+                let mse: f64 = predictions
+                    .iter()
                     .zip(labels.iter())
                     .map(|(pred, label)| {
                         let diff = *pred as f64 - (*label) as f64;
                         diff * diff
                     })
-                    .sum::<f64>() / predictions.len() as f64;
+                    .sum::<f64>()
+                    / predictions.len() as f64;
                 Ok(mse)
             }
             ObjectiveType::Binary => {
@@ -1153,19 +1295,22 @@ impl GBDT {
                 for (pred, label) in predictions.iter().zip(labels.iter()) {
                     let prob = 1.0 / (1.0 + (-pred).exp()) as f64;
                     let prob = prob.max(1e-15).min(1.0 - 1e-15); // Clamp to avoid log(0)
-                    loss += -((*label) as f64 * prob.ln() + (1.0 - (*label) as f64) * (1.0 - prob).ln());
+                    loss += -((*label) as f64 * prob.ln()
+                        + (1.0 - (*label) as f64) * (1.0 - prob).ln());
                 }
                 Ok(loss / predictions.len() as f64)
             }
             _ => {
                 // Default to MSE for other objectives
-                let mse: f64 = predictions.iter()
+                let mse: f64 = predictions
+                    .iter()
                     .zip(labels.iter())
                     .map(|(pred, label)| {
                         let diff = *pred as f64 - (*label) as f64;
                         diff * diff
                     })
-                    .sum::<f64>() / predictions.len() as f64;
+                    .sum::<f64>()
+                    / predictions.len() as f64;
                 Ok(mse)
             }
         }
@@ -1189,16 +1334,26 @@ impl GBDT {
         let train_loss = self.training_history.train_loss.last().unwrap_or(&0.0);
 
         if let Some(valid_loss) = self.training_history.valid_loss.last() {
-            log::info!("Iteration {}: train_loss={:.6}, valid_loss={:.6}",
-                      iteration, train_loss, valid_loss);
+            log::info!(
+                "Iteration {}: train_loss={:.6}, valid_loss={:.6}",
+                iteration,
+                train_loss,
+                valid_loss
+            );
         } else {
             log::info!("Iteration {}: train_loss={:.6}", iteration, train_loss);
         }
 
         // Log best iteration info if available
-        if let (Some(best_iter), Some(best_score)) =
-            (self.training_history.best_iteration, self.training_history.best_score) {
-            log::debug!("Best iteration: {}, best score: {:.6}", best_iter + 1, best_score);
+        if let (Some(best_iter), Some(best_score)) = (
+            self.training_history.best_iteration,
+            self.training_history.best_score,
+        ) {
+            log::debug!(
+                "Best iteration: {}, best score: {:.6}",
+                best_iter + 1,
+                best_score
+            );
         }
     }
 
@@ -1233,21 +1388,31 @@ impl GBDT {
 
     /// Compute gradients and hessians using the objective function
     fn compute_gradients(&mut self) -> Result<()> {
-        let train_data = self.train_data.as_ref()
+        let train_data = self
+            .train_data
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No training data available"))?;
-        let train_scores = self.train_scores.as_ref()
+        let train_scores = self
+            .train_scores
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No training scores available"))?;
 
         let labels = train_data.labels();
         let weights = train_data.weights();
 
-        let objective = self.objective_function.as_ref()
+        let objective = self
+            .objective_function
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No objective function available"))?;
 
-        let gradients = self.gradients.as_mut()
+        let gradients = self
+            .gradients
+            .as_mut()
             .ok_or_else(|| LightGBMError::training("No gradients buffer available"))?;
 
-        let hessians = self.hessians.as_mut()
+        let hessians = self
+            .hessians
+            .as_mut()
             .ok_or_else(|| LightGBMError::training("No hessians buffer available"))?;
 
         objective.compute_gradients(
@@ -1263,11 +1428,17 @@ impl GBDT {
 
     /// Train a decision tree using gradients/hessians with proper split finding
     fn train_tree(&self) -> Result<SimpleTree> {
-        let train_data = self.train_data.as_ref()
+        let train_data = self
+            .train_data
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No training data available"))?;
-        let gradients = self.gradients.as_ref()
+        let gradients = self
+            .gradients
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No gradients available"))?;
-        let hessians = self.hessians.as_ref()
+        let hessians = self
+            .hessians
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No hessians available"))?;
 
         // Create sample indices for this tree
@@ -1283,9 +1454,13 @@ impl GBDT {
 
     /// Update training scores with new tree predictions
     fn update_scores(&mut self, tree: &SimpleTree) -> Result<()> {
-        let train_data = self.train_data.as_ref()
+        let train_data = self
+            .train_data
+            .as_ref()
             .ok_or_else(|| LightGBMError::training("No training data available"))?;
-        let train_scores = self.train_scores.as_mut()
+        let train_scores = self
+            .train_scores
+            .as_mut()
             .ok_or_else(|| LightGBMError::training("No training scores available"))?;
 
         let features = train_data.features();
@@ -1315,20 +1490,24 @@ impl GBDT {
     /// Make predictions on new data
     pub fn predict(&self, features: &ndarray::Array2<f32>) -> Result<ndarray::Array1<f32>> {
         if self.models.is_empty() {
-            return Err(LightGBMError::prediction("No trained models available for prediction"));
+            return Err(LightGBMError::prediction(
+                "No trained models available for prediction",
+            ));
         }
 
         let num_samples = features.nrows();
         let num_features = features.ncols();
 
-        let expected_features = self.train_data.as_ref()
+        let expected_features = self
+            .train_data
+            .as_ref()
             .map(|d| d.num_features())
             .unwrap_or(num_features);
 
         if num_features != expected_features {
             return Err(LightGBMError::dimension_mismatch(
                 format!("expected features: {}", expected_features),
-                format!("provided features: {}", num_features)
+                format!("provided features: {}", num_features),
             ));
         }
 
@@ -1347,9 +1526,7 @@ impl GBDT {
         // Add predictions from all trees
         for tree in &self.models {
             for i in 0..num_samples {
-                let feature_row: Vec<f32> = (0..num_features)
-                    .map(|j| features[[i, j]])
-                    .collect();
+                let feature_row: Vec<f32> = (0..num_features).map(|j| features[[i, j]]).collect();
 
                 let tree_prediction = tree.predict(&feature_row);
                 predictions[i] += tree_prediction as f32;
@@ -1375,7 +1552,9 @@ impl GBDT {
         let num_features = if let Some(ref train_data) = self.train_data {
             train_data.num_features()
         } else {
-            return Err(LightGBMError::training("No training data available to determine feature count"));
+            return Err(LightGBMError::training(
+                "No training data available to determine feature count",
+            ));
         };
 
         let mut total_importance = Array1::zeros(num_features);
@@ -1403,8 +1582,15 @@ impl GBDT {
             ImportanceType::Split => {
                 // For split-based importance, normalize by the average number of splits per tree
                 if !self.models.is_empty() {
-                    let total_splits: f64 = self.models.iter()
-                        .map(|tree| tree.nodes.iter().filter(|node| node.feature_index >= 0).count() as f64)
+                    let total_splits: f64 = self
+                        .models
+                        .iter()
+                        .map(|tree| {
+                            tree.nodes
+                                .iter()
+                                .filter(|node| node.feature_index >= 0)
+                                .count() as f64
+                        })
                         .sum();
                     if total_splits > 0.0 {
                         *importance = importance.clone() / total_splits;
@@ -1438,8 +1624,9 @@ impl GBDT {
 
     /// Calculate permutation importance for the entire ensemble
     fn calculate_ensemble_permutation_importance(&self) -> Result<Array1<f64>> {
-        let train_data = self.train_data.as_ref()
-            .ok_or_else(|| LightGBMError::training("No training data available for permutation importance"))?;
+        let train_data = self.train_data.as_ref().ok_or_else(|| {
+            LightGBMError::training("No training data available for permutation importance")
+        })?;
 
         let num_features = train_data.num_features();
         let mut importance = Array1::zeros(num_features);
@@ -1458,9 +1645,8 @@ impl GBDT {
         // For each feature, permute it and measure performance drop
         for feature_idx in 0..num_features {
             if feature_idx < features.ncols() {
-                let permuted_score = self.calculate_ensemble_permuted_performance(
-                    &features, &labels, feature_idx
-                )?;
+                let permuted_score =
+                    self.calculate_ensemble_permuted_performance(&features, &labels, feature_idx)?;
 
                 // Importance is the drop in performance when feature is permuted
                 let performance_drop = baseline_score - permuted_score;
@@ -1511,7 +1697,8 @@ impl GBDT {
         for i in 0..n_samples {
             let permuted_idx = permuted_indices[i];
             if permuted_idx < n_samples && feature_to_permute < features.ncols() {
-                permuted_features[[i, feature_to_permute]] = features[[permuted_idx, feature_to_permute]];
+                permuted_features[[i, feature_to_permute]] =
+                    features[[permuted_idx, feature_to_permute]];
             }
         }
 
@@ -1548,7 +1735,9 @@ impl GBDT {
         let num_features = features.ncols();
 
         if self.models.is_empty() {
-            return Err(LightGBMError::prediction("No trained models available for SHAP calculation"));
+            return Err(LightGBMError::prediction(
+                "No trained models available for SHAP calculation",
+            ));
         }
 
         // Calculate base value (expected output when no features are known)
@@ -1567,11 +1756,8 @@ impl GBDT {
             let mut sample_shap = ndarray::Array1::zeros(num_features);
 
             for tree in &self.models {
-                let tree_shap = tree.calculate_shap_values(
-                    &sample_features,
-                    base_value,
-                    num_features,
-                );
+                let tree_shap =
+                    tree.calculate_shap_values(&sample_features, base_value, num_features);
                 sample_shap = sample_shap + tree_shap;
             }
 
@@ -1592,7 +1778,9 @@ impl GBDT {
         let num_features = features.len();
 
         if self.models.is_empty() {
-            return Err(LightGBMError::prediction("No trained models available for SHAP calculation"));
+            return Err(LightGBMError::prediction(
+                "No trained models available for SHAP calculation",
+            ));
         }
 
         let base_value = self.calculate_base_value()?;
@@ -1611,18 +1799,24 @@ impl GBDT {
     }
 
     /// Calculate SHAP interaction values for feature pairs
-    pub fn predict_contrib_interactions(&self, features: &ndarray::Array2<f32>) -> Result<ndarray::Array3<f64>> {
+    pub fn predict_contrib_interactions(
+        &self,
+        features: &ndarray::Array2<f32>,
+    ) -> Result<ndarray::Array3<f64>> {
         let num_samples = features.nrows();
         let num_features = features.ncols();
 
         if self.models.is_empty() {
-            return Err(LightGBMError::prediction("No trained models available for SHAP interaction calculation"));
+            return Err(LightGBMError::prediction(
+                "No trained models available for SHAP interaction calculation",
+            ));
         }
 
         let base_value = self.calculate_base_value()?;
 
         // Initialize interaction values tensor: [samples x features x features]
-        let mut interaction_values = ndarray::Array3::zeros((num_samples, num_features, num_features));
+        let mut interaction_values =
+            ndarray::Array3::zeros((num_samples, num_features, num_features));
 
         for sample_idx in 0..num_samples {
             let sample_features: Vec<f32> = (0..num_features)
@@ -1633,11 +1827,8 @@ impl GBDT {
             let mut sample_interactions = ndarray::Array2::zeros((num_features, num_features));
 
             for tree in &self.models {
-                let tree_interactions = tree.calculate_shap_interactions(
-                    &sample_features,
-                    base_value,
-                    num_features,
-                );
+                let tree_interactions =
+                    tree.calculate_shap_interactions(&sample_features, base_value, num_features);
                 sample_interactions = sample_interactions + tree_interactions;
             }
 
@@ -1683,7 +1874,11 @@ impl GBDT {
         for (idx, &shap_value) in shap_values.iter().enumerate() {
             feature_contributions.push(FeatureContribution {
                 feature_index: idx,
-                feature_value: if idx < features.len() { features[idx] as f64 } else { 0.0 },
+                feature_value: if idx < features.len() {
+                    features[idx] as f64
+                } else {
+                    0.0
+                },
                 shap_value,
                 abs_shap_value: shap_value.abs(),
             });
@@ -1691,7 +1886,9 @@ impl GBDT {
 
         // Sort by absolute SHAP value (most important first)
         feature_contributions.sort_by(|a, b| {
-            b.abs_shap_value.partial_cmp(&a.abs_shap_value).unwrap_or(std::cmp::Ordering::Equal)
+            b.abs_shap_value
+                .partial_cmp(&a.abs_shap_value)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         Ok(SHAPExplanation {
@@ -1716,7 +1913,10 @@ impl GBDT {
     }
 
     /// Calculate expected value statistics for SHAP validation
-    pub fn validate_shap_values(&self, features: &ndarray::Array2<f32>) -> Result<SHAPValidationStats> {
+    pub fn validate_shap_values(
+        &self,
+        features: &ndarray::Array2<f32>,
+    ) -> Result<SHAPValidationStats> {
         let shap_values = self.predict_contrib(features)?;
         let predictions = self.predict(features)?;
         let base_value = self.calculate_base_value()?;
@@ -1759,7 +1959,9 @@ pub fn create_objective_function(config: &Config) -> Result<Box<dyn ObjectiveFun
         ObjectiveType::Regression => Ok(Box::new(RegressionObjective)),
         ObjectiveType::Binary => Ok(Box::new(BinaryObjective)),
         ObjectiveType::Multiclass => Ok(Box::new(MulticlassObjective::new(config.num_class))),
-        _ => Err(LightGBMError::not_implemented("Objective function not implemented")),
+        _ => Err(LightGBMError::not_implemented(
+            "Objective function not implemented",
+        )),
     }
 }
 
@@ -1779,10 +1981,18 @@ impl ObjectiveFunction for RegressionObjective {
         // L2 loss: gradient = 2 * (prediction - target), hessian = 2
         // Simplified to: gradient = prediction - target, hessian = 1 (common in practice)
 
-        if predictions.len() != labels.len() || predictions.len() != gradients.len() || predictions.len() != hessians.len() {
+        if predictions.len() != labels.len()
+            || predictions.len() != gradients.len()
+            || predictions.len() != hessians.len()
+        {
             return Err(LightGBMError::dimension_mismatch(
                 format!("predictions: {}", predictions.len()),
-                format!("labels/gradients/hessians: {}/{}/{}", labels.len(), gradients.len(), hessians.len())
+                format!(
+                    "labels/gradients/hessians: {}/{}/{}",
+                    labels.len(),
+                    gradients.len(),
+                    hessians.len()
+                ),
             ));
         }
 
@@ -1790,7 +2000,7 @@ impl ObjectiveFunction for RegressionObjective {
             if weights_array.len() != predictions.len() {
                 return Err(LightGBMError::dimension_mismatch(
                     format!("predictions: {}", predictions.len()),
-                    format!("weights: {}", weights_array.len())
+                    format!("weights: {}", weights_array.len()),
                 ));
             }
 
@@ -1849,10 +2059,18 @@ impl ObjectiveFunction for BinaryObjective {
     ) -> Result<()> {
         // Binary logistic loss: gradient = sigmoid(prediction) - label, hessian = sigmoid(prediction) * (1 - sigmoid(prediction))
 
-        if predictions.len() != labels.len() || predictions.len() != gradients.len() || predictions.len() != hessians.len() {
+        if predictions.len() != labels.len()
+            || predictions.len() != gradients.len()
+            || predictions.len() != hessians.len()
+        {
             return Err(LightGBMError::dimension_mismatch(
                 format!("predictions: {}", predictions.len()),
-                format!("labels/gradients/hessians: {}/{}/{}", labels.len(), gradients.len(), hessians.len())
+                format!(
+                    "labels/gradients/hessians: {}/{}/{}",
+                    labels.len(),
+                    gradients.len(),
+                    hessians.len()
+                ),
             ));
         }
 
@@ -1860,7 +2078,7 @@ impl ObjectiveFunction for BinaryObjective {
             if weights_array.len() != predictions.len() {
                 return Err(LightGBMError::dimension_mismatch(
                     format!("predictions: {}", predictions.len()),
-                    format!("weights: {}", weights_array.len())
+                    format!("weights: {}", weights_array.len()),
                 ));
             }
 
@@ -1935,8 +2153,11 @@ impl ObjectiveFunction for MulticlassObjective {
 
         if predictions.len() != num_data * num_classes {
             return Err(LightGBMError::dimension_mismatch(
-                format!("Predictions size mismatch for multiclass: expected {}, got {}",
-                        num_data * num_classes, predictions.len()),
+                format!(
+                    "Predictions size mismatch for multiclass: expected {}, got {}",
+                    num_data * num_classes,
+                    predictions.len()
+                ),
                 predictions.len().to_string(),
             ));
         }
@@ -1979,7 +2200,9 @@ impl ObjectiveFunction for MulticlassObjective {
 
     fn transform_predictions(&self, _scores: &mut ndarray::ArrayViewMut1<'_, Score>) -> Result<()> {
         // Apply softmax transformation
-        Err(LightGBMError::not_implemented("MulticlassObjective::transform_predictions"))
+        Err(LightGBMError::not_implemented(
+            "MulticlassObjective::transform_predictions",
+        ))
     }
 
     fn num_classes(&self) -> usize {
@@ -2113,8 +2336,15 @@ impl<'a> TreeBuilder<'a> {
 
     /// Calculate node weight (sum of hessians)
     fn calculate_node_weight(&self, sample_indices: &[usize]) -> f64 {
-        sample_indices.iter()
-            .map(|&idx| if idx < self.hessians.len() { self.hessians[idx] as f64 } else { 1.0 })
+        sample_indices
+            .iter()
+            .map(|&idx| {
+                if idx < self.hessians.len() {
+                    self.hessians[idx] as f64
+                } else {
+                    1.0
+                }
+            })
             .sum()
     }
 
@@ -2152,18 +2382,32 @@ impl<'a> TreeBuilder<'a> {
 
         let features = self.train_data.features();
         let num_features = self.train_data.num_features();
-        
+
         // Debug: Check gradients and hessians
-        let total_gradient: f64 = sample_indices.iter().map(|&idx| self.gradients[idx] as f64).sum();
-        let total_hessian: f64 = sample_indices.iter().map(|&idx| self.hessians[idx] as f64).sum();
-        log::debug!("find_best_split: {} samples, total_gradient={:.6}, total_hessian={:.6}", 
-                   sample_indices.len(), total_gradient, total_hessian);
-        
+        let total_gradient: f64 = sample_indices
+            .iter()
+            .map(|&idx| self.gradients[idx] as f64)
+            .sum();
+        let total_hessian: f64 = sample_indices
+            .iter()
+            .map(|&idx| self.hessians[idx] as f64)
+            .sum();
+        log::debug!(
+            "find_best_split: {} samples, total_gradient={:.6}, total_hessian={:.6}",
+            sample_indices.len(),
+            total_gradient,
+            total_hessian
+        );
+
         // Debug: Sample a few gradient/hessian values
         for i in 0..std::cmp::min(5, sample_indices.len()) {
             let idx = sample_indices[i];
-            log::debug!("  sample[{}]: gradient={:.6}, hessian={:.6}", 
-                       idx, self.gradients[idx], self.hessians[idx]);
+            log::debug!(
+                "  sample[{}]: gradient={:.6}, hessian={:.6}",
+                idx,
+                self.gradients[idx],
+                self.hessians[idx]
+            );
         }
 
         // Iterate through features to find best split
@@ -2183,15 +2427,21 @@ impl<'a> TreeBuilder<'a> {
                 .collect();
 
             // Sort by feature value
-            feature_values.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-            
+            feature_values
+                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
             // Debug: Check feature value distribution
             if feature_values.len() > 0 {
                 let min_val = feature_values[0].0;
                 let max_val = feature_values[feature_values.len() - 1].0;
-                log::debug!("  feature[{}]: min={:.6}, max={:.6}, samples={}", 
-                           feature_idx, min_val, max_val, feature_values.len());
-                
+                log::debug!(
+                    "  feature[{}]: min={:.6}, max={:.6}, samples={}",
+                    feature_idx,
+                    min_val,
+                    max_val,
+                    feature_values.len()
+                );
+
                 // Check if feature has variation
                 if (max_val - min_val).abs() < 1e-8 {
                     log::debug!("  feature[{}]: No variation, skipping", feature_idx);
@@ -2210,16 +2460,27 @@ impl<'a> TreeBuilder<'a> {
                 }
 
                 // Split samples
-                let left_indices: Vec<usize> = feature_values[..=i].iter().map(|(_, idx)| *idx).collect();
-                let right_indices: Vec<usize> = feature_values[(i + 1)..].iter().map(|(_, idx)| *idx).collect();
+                let left_indices: Vec<usize> =
+                    feature_values[..=i].iter().map(|(_, idx)| *idx).collect();
+                let right_indices: Vec<usize> = feature_values[(i + 1)..]
+                    .iter()
+                    .map(|(_, idx)| *idx)
+                    .collect();
 
                 // Calculate gain
-                let gain = self.calculate_split_gain(&left_indices, &right_indices, sample_indices)?;
+                let gain =
+                    self.calculate_split_gain(&left_indices, &right_indices, sample_indices)?;
 
                 // Debug: Log gain calculation for first few splits
                 if feature_idx < 2 && i < min_leaf_size + 5 {
-                    log::debug!("    split feature[{}] threshold={:.6}: left={}, right={}, gain={:.6}", 
-                               feature_idx, threshold, left_indices.len(), right_indices.len(), gain);
+                    log::debug!(
+                        "    split feature[{}] threshold={:.6}: left={}, right={}, gain={:.6}",
+                        feature_idx,
+                        threshold,
+                        left_indices.len(),
+                        right_indices.len(),
+                        gain
+                    );
                 }
 
                 if gain > best_gain {
@@ -2231,45 +2492,80 @@ impl<'a> TreeBuilder<'a> {
                         left_indices,
                         right_indices,
                     });
-                    log::debug!("    new best split: feature[{}] threshold={:.6} gain={:.6}", 
-                               feature_idx, threshold, gain);
+                    log::debug!(
+                        "    new best split: feature[{}] threshold={:.6} gain={:.6}",
+                        feature_idx,
+                        threshold,
+                        gain
+                    );
                 }
             }
         }
 
         // Only return split if gain is significant
         let min_split_gain = self.config.min_gain_to_split as f64;
-        log::debug!("find_best_split result: best_gain={:.6}, min_split_gain={:.6}, has_split={}", 
-                   best_gain, min_split_gain, best_gain > min_split_gain);
-        
+        log::debug!(
+            "find_best_split result: best_gain={:.6}, min_split_gain={:.6}, has_split={}",
+            best_gain,
+            min_split_gain,
+            best_gain > min_split_gain
+        );
+
         if best_gain > min_split_gain {
             log::debug!("Accepting split with gain={:.6}", best_gain);
             Ok(best_split)
         } else {
-            log::debug!("Rejecting split - gain too low: {:.6} <= {:.6}", best_gain, min_split_gain);
+            log::debug!(
+                "Rejecting split - gain too low: {:.6} <= {:.6}",
+                best_gain,
+                min_split_gain
+            );
             Ok(None)
         }
     }
 
     /// Calculate the gain from a split using LightGBM formula
     /// Gain = (1/2) · [G_L²/(H_L + λ) + G_R²/(H_R + λ) - G²/(H + λ)] - γ
-    fn calculate_split_gain(&self, left_indices: &[usize], right_indices: &[usize], parent_indices: &[usize]) -> Result<f64> {
+    fn calculate_split_gain(
+        &self,
+        left_indices: &[usize],
+        right_indices: &[usize],
+        parent_indices: &[usize],
+    ) -> Result<f64> {
         if left_indices.is_empty() || right_indices.is_empty() {
             return Ok(0.0);
         }
 
         // Calculate gradients and hessians sums
-        let g_left: f64 = left_indices.iter().map(|&idx| self.gradients[idx] as f64).sum();
-        let h_left: f64 = left_indices.iter().map(|&idx| self.hessians[idx] as f64).sum();
-        
-        let g_right: f64 = right_indices.iter().map(|&idx| self.gradients[idx] as f64).sum();
-        let h_right: f64 = right_indices.iter().map(|&idx| self.hessians[idx] as f64).sum();
-        
-        let g_parent: f64 = parent_indices.iter().map(|&idx| self.gradients[idx] as f64).sum();
-        let h_parent: f64 = parent_indices.iter().map(|&idx| self.hessians[idx] as f64).sum();
+        let g_left: f64 = left_indices
+            .iter()
+            .map(|&idx| self.gradients[idx] as f64)
+            .sum();
+        let h_left: f64 = left_indices
+            .iter()
+            .map(|&idx| self.hessians[idx] as f64)
+            .sum();
+
+        let g_right: f64 = right_indices
+            .iter()
+            .map(|&idx| self.gradients[idx] as f64)
+            .sum();
+        let h_right: f64 = right_indices
+            .iter()
+            .map(|&idx| self.hessians[idx] as f64)
+            .sum();
+
+        let g_parent: f64 = parent_indices
+            .iter()
+            .map(|&idx| self.gradients[idx] as f64)
+            .sum();
+        let h_parent: f64 = parent_indices
+            .iter()
+            .map(|&idx| self.hessians[idx] as f64)
+            .sum();
 
         let lambda = self.config.lambda_l2 as f64;
-        let gamma = self.config.min_gain_to_split as f64;  // Minimum split gain threshold
+        let gamma = self.config.min_gain_to_split as f64; // Minimum split gain threshold
 
         // Debug: Check if we have the expected gradient/hessian sums
         let expected_g_sum = g_left + g_right;
@@ -2283,21 +2579,28 @@ impl<'a> TreeBuilder<'a> {
         let left_score = (g_left * g_left) / (h_left + lambda);
         let right_score = (g_right * g_right) / (h_right + lambda);
         let parent_score = (g_parent * g_parent) / (h_parent + lambda);
-        
+
         let gain_before_gamma = 0.5 * (left_score + right_score - parent_score);
         let gain = gain_before_gamma - gamma;
 
         // Debug: Log detailed gain calculation
-        if parent_indices.len() <= 100 { // Only for small nodes to avoid spam
-            log::debug!("      gain calc: g_L={:.3}, h_L={:.3}, g_R={:.3}, h_R={:.3}, g_P={:.3}, h_P={:.3}",
-                       g_left, h_left, g_right, h_right, g_parent, h_parent);
+        if parent_indices.len() <= 100 {
+            // Only for small nodes to avoid spam
+            log::debug!(
+                "      gain calc: g_L={:.3}, h_L={:.3}, g_R={:.3}, h_R={:.3}, g_P={:.3}, h_P={:.3}",
+                g_left,
+                h_left,
+                g_right,
+                h_right,
+                g_parent,
+                h_parent
+            );
             log::debug!("      scores: left={:.6}, right={:.6}, parent={:.6}, gain_raw={:.6}, gamma={:.6}, final_gain={:.6}",
                        left_score, right_score, parent_score, gain_before_gamma, gamma, gain);
         }
 
-        Ok(gain.max(0.0))  // Ensure non-negative gain
+        Ok(gain.max(0.0)) // Ensure non-negative gain
     }
-
 
     /// Calculate optimal leaf value using Newton-Raphson method
     /// w_j = -Σ_{i∈I_j} g_i / (Σ_{i∈I_j} h_i + λ)
@@ -2306,8 +2609,14 @@ impl<'a> TreeBuilder<'a> {
             return Ok(0.0);
         }
 
-        let sum_gradients: f64 = sample_indices.iter().map(|&idx| self.gradients[idx] as f64).sum();
-        let sum_hessians: f64 = sample_indices.iter().map(|&idx| self.hessians[idx] as f64).sum();
+        let sum_gradients: f64 = sample_indices
+            .iter()
+            .map(|&idx| self.gradients[idx] as f64)
+            .sum();
+        let sum_hessians: f64 = sample_indices
+            .iter()
+            .map(|&idx| self.hessians[idx] as f64)
+            .sum();
 
         let lambda = self.config.lambda_l2 as f64;
         let regularized_hessian = sum_hessians + lambda;
@@ -2315,7 +2624,7 @@ impl<'a> TreeBuilder<'a> {
         if regularized_hessian > 1e-6 {
             // Newton-Raphson formula: w_j = -G_j / (H_j + λ)
             let leaf_value = -sum_gradients / regularized_hessian;
-            
+
             // Apply learning rate as shrinkage
             Ok(leaf_value * self.config.learning_rate as f64)
         } else {
@@ -2326,21 +2635,34 @@ impl<'a> TreeBuilder<'a> {
     /// Convert TreeNode to SimpleTree
     fn to_simple_tree(&mut self, root: TreeNode) -> SimpleTree {
         self.nodes.clear();
-        
+
         // Debug: Log the structure of the TreeNode before conversion
-        log::debug!("Converting TreeNode to SimpleTree - root: feature={}, threshold={:.6}, has_children={}", 
+        log::debug!("Converting TreeNode to SimpleTree - root: feature={}, threshold={:.6}, has_children={}",
                    root.feature_index, root.threshold, root.left_child.is_some() && root.right_child.is_some());
-        
+
         self.convert_node(&root);
 
-        let num_leaves = self.nodes.iter().filter(|node| node.feature_index < 0).count();
-        
+        let num_leaves = self
+            .nodes
+            .iter()
+            .filter(|node| node.feature_index < 0)
+            .count();
+
         // Debug: Log the final SimpleTree structure
-        log::debug!("SimpleTree created: {} total nodes, {} leaves", self.nodes.len(), num_leaves);
+        log::debug!(
+            "SimpleTree created: {} total nodes, {} leaves",
+            self.nodes.len(),
+            num_leaves
+        );
         if !self.nodes.is_empty() {
             let root_node = &self.nodes[0];
-            log::debug!("SimpleTree root: feature={}, threshold={:.6}, left={}, right={}", 
-                       root_node.feature_index, root_node.threshold, root_node.left_child, root_node.right_child);
+            log::debug!(
+                "SimpleTree root: feature={}, threshold={:.6}, left={}, right={}",
+                root_node.feature_index,
+                root_node.threshold,
+                root_node.left_child,
+                root_node.right_child
+            );
         }
 
         SimpleTree {
@@ -2353,9 +2675,12 @@ impl<'a> TreeBuilder<'a> {
     fn convert_node(&mut self, node: &TreeNode) -> i32 {
         let node_idx = self.nodes.len() as i32;
 
-        log::debug!("Converting node {}: feature={}, has_children={}", 
-                   node_idx, node.feature_index, 
-                   node.left_child.is_some() && node.right_child.is_some());
+        log::debug!(
+            "Converting node {}: feature={}, has_children={}",
+            node_idx,
+            node.feature_index,
+            node.left_child.is_some() && node.right_child.is_some()
+        );
 
         // IMPORTANT: Add the current node FIRST to reserve its index position
         self.nodes.push(SimpleTreeNode {
@@ -2371,19 +2696,25 @@ impl<'a> TreeBuilder<'a> {
         });
 
         // Now process children and update the indices
-        let (left_child, right_child) = if let (Some(ref left), Some(ref right)) = (&node.left_child, &node.right_child) {
-            let left_idx = self.convert_node(left);
-            let right_idx = self.convert_node(right);
-            (left_idx, right_idx)
-        } else {
-            (-1, -1)
-        };
+        let (left_child, right_child) =
+            if let (Some(ref left), Some(ref right)) = (&node.left_child, &node.right_child) {
+                let left_idx = self.convert_node(left);
+                let right_idx = self.convert_node(right);
+                (left_idx, right_idx)
+            } else {
+                (-1, -1)
+            };
 
         // Update the node's child indices
         self.nodes[node_idx as usize].left_child = left_child;
         self.nodes[node_idx as usize].right_child = right_child;
 
-        log::debug!("Node {}: setting children left={}, right={}", node_idx, left_child, right_child);
+        log::debug!(
+            "Node {}: setting children left={}, right={}",
+            node_idx,
+            left_child,
+            right_child
+        );
 
         node_idx
     }
