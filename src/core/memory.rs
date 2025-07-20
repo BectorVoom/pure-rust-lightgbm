@@ -10,6 +10,7 @@ use std::alloc::{alloc, alloc_zeroed, dealloc, Layout};
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Thread-safe memory usage tracker for monitoring and debugging.
 static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
@@ -341,23 +342,128 @@ impl<T: std::fmt::Debug> std::fmt::Debug for AlignedBuffer<T> {
 /// Memory statistics for monitoring and debugging.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryStats {
+    /// Total bytes allocated in memory
     pub allocated_bytes: usize,
+    /// Bytes currently in use
     pub used_bytes: usize,
+    /// Memory alignment in bytes
     pub alignment: usize,
+    /// Total capacity in number of elements
     pub capacity_elements: usize,
+    /// Current length in number of elements
     pub length_elements: usize,
+    /// Available free bytes
     pub free_bytes: usize,
+    /// Total number of allocations made
     pub num_allocations: usize,
 }
 
 /// Memory statistics for individual memory handles.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemoryHandleStats {
+    /// Size of the allocation in bytes
     pub size_bytes: usize,
+    /// Number of elements in the allocation
     pub size_elements: usize,
+    /// Size of each element in bytes
     pub element_size: usize,
+    /// Timestamp when the allocation was created
     pub allocated_at: std::time::SystemTime,
+    /// Age of the allocation in milliseconds
     pub age_ms: u64,
+}
+
+/// Type-erased trait for tracking memory handles regardless of their element type.
+pub trait AnyMemoryHandle: Send + Sync + std::fmt::Debug {
+    /// Get the size of the allocation in bytes
+    fn size_bytes(&self) -> usize;
+
+    /// Get the element size in bytes
+    fn element_size(&self) -> usize;
+
+    /// Get the time when this handle was allocated
+    fn allocated_at(&self) -> std::time::SystemTime;
+
+    /// Get the age of this allocation in milliseconds
+    fn age_ms(&self) -> Result<u64>;
+
+    /// Check if this handle represents a valid allocation
+    fn is_valid(&self) -> bool;
+
+    /// Get memory usage statistics for this handle
+    fn usage_stats(&self) -> MemoryHandleStats;
+}
+
+/// Thread-safe collection of active memory handles for tracking purposes.
+#[derive(Debug, Default)]
+pub struct ActiveHandleTracker {
+    handles: Arc<Mutex<Vec<Box<dyn AnyMemoryHandle>>>>,
+}
+
+impl ActiveHandleTracker {
+    /// Create a new active handle tracker
+    pub fn new() -> Self {
+        Self {
+            handles: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Add a handle to the tracker
+    pub fn add_handle(&self, handle: Box<dyn AnyMemoryHandle>) {
+        if let Ok(mut handles) = self.handles.lock() {
+            handles.push(handle);
+        }
+    }
+
+    /// Remove and return a handle that matches the given criteria
+    pub fn remove_handle(
+        &self,
+        size_bytes: usize,
+        allocated_at: std::time::SystemTime,
+    ) -> Option<Box<dyn AnyMemoryHandle>> {
+        if let Ok(mut handles) = self.handles.lock() {
+            if let Some(pos) = handles
+                .iter()
+                .position(|h| h.size_bytes() == size_bytes && h.allocated_at() == allocated_at)
+            {
+                Some(handles.remove(pos))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Get the number of active handles
+    pub fn active_count(&self) -> usize {
+        self.handles.lock().map(|h| h.len()).unwrap_or(0)
+    }
+
+    /// Get total memory usage of all active handles
+    pub fn total_memory(&self) -> usize {
+        if let Ok(handles) = self.handles.lock() {
+            handles.iter().map(|h| h.size_bytes()).sum()
+        } else {
+            0
+        }
+    }
+
+    /// Get statistics for all active handles
+    pub fn all_handle_stats(&self) -> Vec<MemoryHandleStats> {
+        if let Ok(handles) = self.handles.lock() {
+            handles.iter().map(|h| h.usage_stats()).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Clear all handles from the tracker
+    pub fn clear(&self) {
+        if let Ok(mut handles) = self.handles.lock() {
+            handles.clear();
+        }
+    }
 }
 
 impl MemoryStats {
@@ -384,7 +490,7 @@ pub struct MemoryPool<T> {
     max_pool_size: usize,
     total_allocated_bytes: usize,
     max_memory_bytes: Option<usize>,
-    active_handles: Vec<MemoryHandle<T>>,
+    active_handles: ActiveHandleTracker,
 }
 
 impl<T> MemoryPool<T> {
@@ -396,7 +502,7 @@ impl<T> MemoryPool<T> {
             max_pool_size,
             total_allocated_bytes: 0,
             max_memory_bytes: None,
-            active_handles: Vec::new(),
+            active_handles: ActiveHandleTracker::new(),
         }
     }
 
@@ -412,7 +518,7 @@ impl<T> MemoryPool<T> {
             max_pool_size,
             total_allocated_bytes: 0,
             max_memory_bytes: Some(max_memory_bytes),
-            active_handles: Vec::new(),
+            active_handles: ActiveHandleTracker::new(),
         }
     }
 
@@ -452,7 +558,10 @@ impl<T> MemoryPool<T> {
     }
 
     /// Allocate a buffer with specified size (for compatibility)
-    pub fn allocate<U>(&mut self, size: usize) -> Result<MemoryHandle<U>> {
+    pub fn allocate<U: Send + Sync + std::fmt::Debug + 'static>(
+        &mut self,
+        size: usize,
+    ) -> Result<MemoryHandle<U>> {
         // Check memory constraints
         if let Some(max_memory) = self.max_memory_bytes {
             if self.total_allocated_bytes + size > max_memory {
@@ -464,22 +573,35 @@ impl<T> MemoryPool<T> {
         let handle = MemoryHandle::new(size);
         self.total_allocated_bytes += size;
 
-        // TODO: Implement proper active memory handle tracking for MemoryPool
-        // The active_handles field is currently unused due to type constraints.
-        // Need to implement a separate tracking mechanism for memory handles
-        // as specified in the design document for memory management optimization.
-        // See: pure_rust_detailed_lightgbm_design_document.md - Memory Management Strategy
-        // Note: We can't store the handle in active_handles here due to type constraints
-        // In a real implementation, we would need a separate tracking mechanism
+        // Track the handle using the type-erased tracking system
+        let handle_clone = MemoryHandle::<U> {
+            size: handle.size,
+            allocated_at: handle.allocated_at,
+            phantom: PhantomData,
+        };
+        self.active_handles.add_handle(Box::new(handle_clone));
 
         Ok(handle)
     }
 
     /// Deallocate a buffer handle (for compatibility)
-    pub fn deallocate<U>(&mut self, handle: MemoryHandle<U>) -> Result<()> {
-        // Update memory tracking
+    pub fn deallocate<U: Send + Sync + std::fmt::Debug + 'static>(
+        &mut self,
+        handle: MemoryHandle<U>,
+    ) -> Result<()> {
+        // Remove the handle from active tracking
         let size = handle.size_bytes();
-        self.total_allocated_bytes = self.total_allocated_bytes.saturating_sub(size);
+        let allocated_at = handle.allocated_at();
+
+        if self
+            .active_handles
+            .remove_handle(size, allocated_at)
+            .is_some()
+        {
+            // Successfully removed from tracking, update memory accounting
+            self.total_allocated_bytes = self.total_allocated_bytes.saturating_sub(size);
+        }
+
         Ok(())
     }
 
@@ -564,6 +686,81 @@ impl<T> MemoryPool<T> {
 
         report
     }
+
+    /// Get the number of active memory handles
+    pub fn active_handle_count(&self) -> usize {
+        self.active_handles.active_count()
+    }
+
+    /// Get total memory usage from active handles
+    pub fn active_handles_memory(&self) -> usize {
+        self.active_handles.total_memory()
+    }
+
+    /// Get statistics for all active handles
+    pub fn active_handle_stats(&self) -> Vec<MemoryHandleStats> {
+        self.active_handles.all_handle_stats()
+    }
+
+    /// Clear all active handle tracking (for cleanup/reset scenarios)
+    pub fn clear_active_handles(&self) {
+        self.active_handles.clear();
+    }
+
+    /// Get a detailed report including active handle information
+    pub fn detailed_memory_report(&self) -> String {
+        let stats = self.stats();
+        let active_count = self.active_handle_count();
+        let active_memory = self.active_handles_memory();
+
+        let mut report = format!(
+            "Detailed Memory Pool Report:\n\
+             - Pool Capacity: {} buffers\n\
+             - Available Buffers: {}\n\
+             - Buffer Size: {} elements\n\
+             - Total Allocated: {} bytes\n\
+             - Total Used: {} bytes\n\
+             - Utilization: {:.2}%\n\
+             - Active Handles: {}\n\
+             - Active Handle Memory: {} bytes\n",
+            self.max_pool_size,
+            self.available_buffers.len(),
+            self.buffer_capacity,
+            stats.allocated_bytes,
+            stats.used_bytes,
+            stats.utilization(),
+            active_count,
+            active_memory
+        );
+
+        if let Some(limit) = self.max_memory_bytes {
+            report.push_str(&format!(
+                " - Memory Limit: {} bytes\n\
+                 - Memory Usage: {} bytes\n\
+                 - Remaining: {} bytes\n",
+                limit,
+                self.total_allocated_bytes,
+                limit.saturating_sub(self.total_allocated_bytes)
+            ));
+        }
+
+        // Add active handle details if any exist
+        if active_count > 0 {
+            report.push_str("\nActive Handle Details:\n");
+            for (i, handle_stats) in self.active_handle_stats().iter().enumerate() {
+                report.push_str(&format!(
+                    "  Handle {}: {} bytes ({} elements of {} bytes each), age: {}ms\n",
+                    i + 1,
+                    handle_stats.size_bytes,
+                    handle_stats.size_elements,
+                    handle_stats.element_size,
+                    handle_stats.age_ms
+                ));
+            }
+        }
+
+        report
+    }
 }
 
 /// Handle representing a memory allocation
@@ -614,6 +811,41 @@ impl<T> MemoryHandle<T> {
 
     /// Get memory usage statistics for this handle
     pub fn usage_stats(&self) -> MemoryHandleStats {
+        MemoryHandleStats {
+            size_bytes: self.size,
+            size_elements: self.size_elements(),
+            element_size: std::mem::size_of::<T>(),
+            allocated_at: self.allocated_at,
+            age_ms: self.age_ms().unwrap_or(0),
+        }
+    }
+}
+
+impl<T: Send + Sync + std::fmt::Debug + 'static> AnyMemoryHandle for MemoryHandle<T> {
+    fn size_bytes(&self) -> usize {
+        self.size
+    }
+
+    fn element_size(&self) -> usize {
+        std::mem::size_of::<T>()
+    }
+
+    fn allocated_at(&self) -> std::time::SystemTime {
+        self.allocated_at
+    }
+
+    fn age_ms(&self) -> Result<u64> {
+        self.allocated_at
+            .elapsed()
+            .map(|duration| duration.as_millis() as u64)
+            .map_err(|_| MemoryError::AllocationFailed { size: 0 }.into())
+    }
+
+    fn is_valid(&self) -> bool {
+        self.size > 0
+    }
+
+    fn usage_stats(&self) -> MemoryHandleStats {
         MemoryHandleStats {
             size_bytes: self.size,
             size_elements: self.size_elements(),
@@ -871,5 +1103,121 @@ mod tests {
 
         let age = handle.age_ms().unwrap();
         assert!(age >= 10);
+    }
+
+    #[test]
+    fn test_active_handle_tracking() {
+        let mut pool: MemoryPool<u8> = MemoryPool::new(100, 5);
+
+        // Initially no active handles
+        assert_eq!(pool.active_handle_count(), 0);
+        assert_eq!(pool.active_handles_memory(), 0);
+
+        // Allocate some handles
+        let handle1 = pool.allocate::<i32>(128).unwrap();
+        let handle2 = pool.allocate::<f64>(256).unwrap();
+
+        // Should now have 2 active handles
+        assert_eq!(pool.active_handle_count(), 2);
+        assert_eq!(pool.active_handles_memory(), 128 + 256);
+
+        // Get handle statistics
+        let stats = pool.active_handle_stats();
+        assert_eq!(stats.len(), 2);
+
+        // Deallocate one handle
+        pool.deallocate(handle1).unwrap();
+        assert_eq!(pool.active_handle_count(), 1);
+        assert_eq!(pool.active_handles_memory(), 256);
+
+        // Deallocate the other handle
+        pool.deallocate(handle2).unwrap();
+        assert_eq!(pool.active_handle_count(), 0);
+        assert_eq!(pool.active_handles_memory(), 0);
+    }
+
+    #[test]
+    fn test_active_handle_tracker() {
+        let tracker = ActiveHandleTracker::new();
+
+        // Initially empty
+        assert_eq!(tracker.active_count(), 0);
+        assert_eq!(tracker.total_memory(), 0);
+
+        // Add some handles
+        let handle1: MemoryHandle<i32> = MemoryHandle::new(1024);
+        let handle2: MemoryHandle<f64> = MemoryHandle::new(2048);
+
+        let allocated_at1 = handle1.allocated_at();
+        let _allocated_at2 = handle2.allocated_at();
+
+        tracker.add_handle(Box::new(handle1));
+        tracker.add_handle(Box::new(handle2));
+
+        assert_eq!(tracker.active_count(), 2);
+        assert_eq!(tracker.total_memory(), 3072);
+
+        // Remove one handle
+        let removed = tracker.remove_handle(1024, allocated_at1);
+        assert!(removed.is_some());
+        assert_eq!(tracker.active_count(), 1);
+        assert_eq!(tracker.total_memory(), 2048);
+
+        // Get all stats
+        let all_stats = tracker.all_handle_stats();
+        assert_eq!(all_stats.len(), 1);
+        assert_eq!(all_stats[0].size_bytes, 2048);
+
+        // Clear all
+        tracker.clear();
+        assert_eq!(tracker.active_count(), 0);
+    }
+
+    #[test]
+    fn test_any_memory_handle_trait() {
+        let handle: MemoryHandle<u32> = MemoryHandle::new(512);
+
+        // Test AnyMemoryHandle trait methods
+        assert_eq!(handle.size_bytes(), 512);
+        assert_eq!(handle.element_size(), std::mem::size_of::<u32>());
+        assert!(handle.is_valid());
+        assert!(handle.age_ms().unwrap() >= 0);
+
+        let stats = handle.usage_stats();
+        assert_eq!(stats.size_bytes, 512);
+        assert_eq!(stats.element_size, std::mem::size_of::<u32>());
+    }
+
+    #[test]
+    fn test_memory_pool_detailed_reporting() {
+        let mut pool: MemoryPool<i64> = MemoryPool::with_memory_limit(50, 2, 1000);
+
+        // Allocate some handles
+        let _handle1 = pool.allocate::<u8>(200).unwrap();
+        let _handle2 = pool.allocate::<u16>(300).unwrap();
+
+        let report = pool.detailed_memory_report();
+        assert!(report.contains("Detailed Memory Pool Report"));
+        assert!(report.contains("Active Handles: 2"));
+        assert!(report.contains("Active Handle Memory: 500 bytes"));
+        assert!(report.contains("Active Handle Details:"));
+    }
+
+    #[test]
+    fn test_memory_pool_clear_active_handles() {
+        let mut pool: MemoryPool<f32> = MemoryPool::new(100, 5);
+
+        // Allocate some handles
+        let _handle1 = pool.allocate::<i32>(128).unwrap();
+        let _handle2 = pool.allocate::<f64>(256).unwrap();
+
+        assert_eq!(pool.active_handle_count(), 2);
+
+        // Clear active handles
+        pool.clear_active_handles();
+        assert_eq!(pool.active_handle_count(), 0);
+
+        // Memory usage should still be tracked in total_allocated_bytes
+        assert!(pool.memory_usage() > 0);
     }
 }

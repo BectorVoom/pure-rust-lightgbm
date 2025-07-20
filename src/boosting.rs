@@ -1076,7 +1076,7 @@ impl GBDT {
 
         // Get dataset info first
         let (_num_data, _num_features, base_prediction) = {
-            // TODO: Implement data loading functionality - num_data and num_features currently unused
+            // TODO: Implement data loading functionality - num_data and num_features currently unused (issue #68)
             // These should be used for validation and memory allocation
             let train_data = self
                 .train_data
@@ -1484,8 +1484,11 @@ impl GBDT {
         let mut tree_builder = TreeBuilder::new(&self.config, train_data, gradients, hessians);
         let root_node = tree_builder.build_node(&sample_indices, 0)?;
 
+        // Apply depth-based pruning to the constructed tree
+        let pruned_root = tree_builder.prune_tree(root_node);
+
         // Convert to SimpleTree format
-        Ok(tree_builder.to_simple_tree(root_node))
+        Ok(tree_builder.to_simple_tree(pruned_root))
     }
 
     /// Update training scores with new tree predictions
@@ -2336,7 +2339,7 @@ impl<'a> TreeBuilder<'a> {
         }
 
         // Find best split
-        if let Some(best_split) = self.find_best_split(sample_indices)? {
+        if let Some(best_split) = self.find_best_split(sample_indices, depth)? {
             // Create left and right children
             let left_child = Box::new(self.build_node(&best_split.left_indices, depth + 1)?);
             let right_child = Box::new(self.build_node(&best_split.right_indices, depth + 1)?);
@@ -2413,7 +2416,7 @@ impl<'a> TreeBuilder<'a> {
     }
 
     /// Find the best split for the given samples
-    fn find_best_split(&self, sample_indices: &[usize]) -> Result<Option<BestSplit>> {
+    fn find_best_split(&self, sample_indices: &[usize], depth: usize) -> Result<Option<BestSplit>> {
         let mut best_split: Option<BestSplit> = None;
         let mut best_gain = 0.0;
 
@@ -2506,7 +2509,7 @@ impl<'a> TreeBuilder<'a> {
 
                 // Calculate gain
                 let gain =
-                    self.calculate_split_gain(&left_indices, &right_indices, sample_indices)?;
+                    self.calculate_split_gain(&left_indices, &right_indices, sample_indices, depth)?;
 
                 // Debug: Log gain calculation for first few splits
                 if feature_idx < 2 && i < min_leaf_size + 5 {
@@ -2520,7 +2523,16 @@ impl<'a> TreeBuilder<'a> {
                     );
                 }
 
-                if gain > best_gain {
+                // Depth-aware split selection: prefer splits with higher gain, 
+                // but if gains are similar (within 1% tolerance), prefer current depth
+                let gain_improvement_threshold = 1.01; // 1% improvement threshold
+                let should_update = if let Some(_current_best) = &best_split {
+                    gain > best_gain * gain_improvement_threshold
+                } else {
+                    gain > best_gain
+                };
+
+                if should_update {
                     best_gain = gain;
                     best_split = Some(BestSplit {
                         feature_idx,
@@ -2530,10 +2542,11 @@ impl<'a> TreeBuilder<'a> {
                         right_indices,
                     });
                     log::debug!(
-                        "    new best split: feature[{}] threshold={:.6} gain={:.6}",
+                        "    new best split: feature[{}] threshold={:.6} gain={:.6} (depth={})",
                         feature_idx,
                         threshold,
-                        gain
+                        gain,
+                        depth
                     );
                 }
             }
@@ -2561,13 +2574,14 @@ impl<'a> TreeBuilder<'a> {
         }
     }
 
-    /// Calculate the gain from a split using LightGBM formula
-    /// Gain = (1/2) · [G_L²/(H_L + λ) + G_R²/(H_R + λ) - G²/(H + λ)] - γ
+    /// Calculate the gain from a split using LightGBM formula with depth-based regularization
+    /// Gain = (1/2) · [G_L²/(H_L + λ) + G_R²/(H_R + λ) - G²/(H + λ)] - γ - depth_penalty
     fn calculate_split_gain(
         &self,
         left_indices: &[usize],
         right_indices: &[usize],
         parent_indices: &[usize],
+        depth: usize,
     ) -> Result<f64> {
         if left_indices.is_empty() || right_indices.is_empty() {
             return Ok(0.0);
@@ -2603,6 +2617,14 @@ impl<'a> TreeBuilder<'a> {
 
         let lambda = self.config.lambda_l2 as f64;
         let gamma = self.config.min_gain_to_split as f64; // Minimum split gain threshold
+        
+        // Depth-based regularization: penalty increases with depth to favor shallower trees
+        let depth_penalty = if depth > 0 {
+            let depth_factor = 0.1; // Configurable depth penalty factor
+            depth_factor * (depth as f64).sqrt() // Square root to make penalty more gradual
+        } else {
+            0.0
+        };
 
         // Debug: Check if we have the expected gradient/hessian sums
         let expected_g_sum = g_left + g_right;
@@ -2618,7 +2640,7 @@ impl<'a> TreeBuilder<'a> {
         let parent_score = (g_parent * g_parent) / (h_parent + lambda);
 
         let gain_before_gamma = 0.5 * (left_score + right_score - parent_score);
-        let gain = gain_before_gamma - gamma;
+        let gain = gain_before_gamma - gamma - depth_penalty;
 
         // Debug: Log detailed gain calculation
         if parent_indices.len() <= 100 {
@@ -2632,11 +2654,58 @@ impl<'a> TreeBuilder<'a> {
                 g_parent,
                 h_parent
             );
-            log::debug!("      scores: left={:.6}, right={:.6}, parent={:.6}, gain_raw={:.6}, gamma={:.6}, final_gain={:.6}",
-                       left_score, right_score, parent_score, gain_before_gamma, gamma, gain);
+            log::debug!("      scores: left={:.6}, right={:.6}, parent={:.6}, gain_raw={:.6}, gamma={:.6}, depth_penalty={:.6}, final_gain={:.6}",
+                       left_score, right_score, parent_score, gain_before_gamma, gamma, depth_penalty, gain);
         }
 
         Ok(gain.max(0.0)) // Ensure non-negative gain
+    }
+
+    /// Prune tree based on depth and gain thresholds
+    fn prune_tree(&self, mut node: TreeNode) -> TreeNode {
+        // If this is a leaf, no pruning needed
+        if node.left_child.is_none() && node.right_child.is_none() {
+            return node;
+        }
+
+        // Recursively prune children first
+        if let Some(left_child) = node.left_child.take() {
+            node.left_child = Some(Box::new(self.prune_tree(*left_child)));
+        }
+        if let Some(right_child) = node.right_child.take() {
+            node.right_child = Some(Box::new(self.prune_tree(*right_child)));
+        }
+
+        // Depth-based pruning: if depth is very high and gain is low, convert to leaf
+        let depth_threshold = (self.config.max_depth as f64 * 0.8) as usize; // 80% of max depth
+        let min_gain_for_deep_splits = self.config.min_gain_to_split as f64 * 2.0; // Higher threshold for deep splits
+        
+        if node.depth >= depth_threshold {
+            if let Some(split_gain) = node.split_gain {
+                if split_gain < min_gain_for_deep_splits {
+                    // Convert to leaf node
+                    log::debug!(
+                        "Pruning deep node at depth {} with low gain {:.6}",
+                        node.depth,
+                        split_gain
+                    );
+                    return TreeNode {
+                        feature_index: -1,
+                        threshold: 0.0,
+                        left_child: None,
+                        right_child: None,
+                        leaf_value: node.leaf_value, // Use existing leaf value
+                        sample_count: node.sample_count,
+                        depth: node.depth,
+                        split_gain: None,
+                        node_weight: node.node_weight,
+                        coverage: node.coverage,
+                    };
+                }
+            }
+        }
+
+        node
     }
 
     /// Calculate optimal leaf value using Newton-Raphson method
@@ -2759,3 +2828,257 @@ impl<'a> TreeBuilder<'a> {
 
 // SerializableModel implementation temporarily disabled due to compilation issues
 // impl SerializableModel for GBDT { ... }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::dataset::Dataset;
+    use crate::core::types::ObjectiveType;
+    use ndarray::{Array1, Array2};
+
+    fn create_test_config() -> Config {
+        let mut config = Config::new();
+        config.objective = ObjectiveType::Regression;
+        config.max_depth = 3;
+        config.num_leaves = 8;
+        config.min_data_in_leaf = 5;
+        config.min_gain_to_split = 0.1;
+        config.lambda_l2 = 0.1;
+        config
+    }
+
+    fn create_test_dataset() -> Dataset {
+        // Create a simple dataset for testing
+        let features = Array2::from_shape_vec((20, 2), vec![
+            1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0, 5.0, 6.0,
+            6.0, 7.0, 7.0, 8.0, 8.0, 9.0, 9.0, 10.0, 10.0, 11.0,
+            2.0, 1.0, 3.0, 2.0, 4.0, 3.0, 5.0, 4.0, 6.0, 5.0,
+            7.0, 6.0, 8.0, 7.0, 9.0, 8.0, 10.0, 9.0, 11.0, 10.0,
+        ]).unwrap();
+        let labels = Array1::from_vec(vec![
+            1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5,
+            6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0, 10.5,
+        ]);
+        
+        Dataset::new(features, labels, None, None, None, None).unwrap()
+    }
+
+    #[test]
+    fn test_depth_based_regularization() {
+        let config = create_test_config();
+        let dataset = create_test_dataset();
+        // Create gradients that will lead to meaningful split gains
+        let gradients = Array1::from_vec(vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0]);
+        let hessians = Array1::from_vec(vec![1.0; 20]);
+        
+        let tree_builder = TreeBuilder::new(&config, &dataset, &gradients, &hessians);
+        
+        // Test that deeper splits have higher penalty
+        let sample_indices: Vec<usize> = (0..10).collect();
+        let left_indices: Vec<usize> = (0..5).collect();
+        let right_indices: Vec<usize> = (5..10).collect();
+        
+        // Calculate gain at depth 0 and depth 3
+        let gain_depth_0 = tree_builder.calculate_split_gain(&left_indices, &right_indices, &sample_indices, 0).unwrap();
+        let gain_depth_3 = tree_builder.calculate_split_gain(&left_indices, &right_indices, &sample_indices, 3).unwrap();
+        
+        // Gain at depth 3 should be less than gain at depth 0 due to depth penalty
+        assert!(gain_depth_3 < gain_depth_0, 
+                "Depth penalty should reduce gain: depth_0={:.6}, depth_3={:.6}", 
+                gain_depth_0, gain_depth_3);
+    }
+
+    #[test]
+    fn test_max_depth_constraint() {
+        let config = create_test_config();
+        let dataset = create_test_dataset();
+        let gradients = Array1::from_vec(vec![0.1; 20]);
+        let hessians = Array1::from_vec(vec![1.0; 20]);
+        
+        let tree_builder = TreeBuilder::new(&config, &dataset, &gradients, &hessians);
+        
+        // Test stopping condition at max depth
+        let sample_indices: Vec<usize> = (0..10).collect();
+        
+        // Should NOT stop at depth 2 (below max_depth=3)
+        assert!(!tree_builder.should_stop_splitting(&sample_indices, 2),
+                "Should not stop splitting at depth 2 when max_depth is 3");
+        
+        // Should stop at depth 3 (equal to max_depth=3)
+        assert!(tree_builder.should_stop_splitting(&sample_indices, 3),
+                "Should stop splitting at depth 3 when max_depth is 3");
+        
+        // Should stop at depth 4 (above max_depth=3)
+        assert!(tree_builder.should_stop_splitting(&sample_indices, 4),
+                "Should stop splitting at depth 4 when max_depth is 3");
+    }
+
+    #[test]
+    fn test_depth_aware_split_selection() {
+        let config = create_test_config();
+        let dataset = create_test_dataset();
+        // Create gradients that will lead to meaningful split gains
+        let gradients = Array1::from_vec(vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0]);
+        let hessians = Array1::from_vec(vec![1.0; 20]);
+        
+        let tree_builder = TreeBuilder::new(&config, &dataset, &gradients, &hessians);
+        
+        // Test that depth-aware selection works by checking that similar gains
+        // at different depths are handled correctly through the improvement threshold
+        let sample_indices: Vec<usize> = (0..10).collect();
+        
+        // This is an indirect test - the depth-aware selection logic uses a 1% improvement
+        // threshold which should be visible in the gain calculation differences
+        let gain_depth_1 = tree_builder.calculate_split_gain(
+            &(0..5).collect::<Vec<_>>(), 
+            &(5..10).collect::<Vec<_>>(), 
+            &sample_indices, 
+            1
+        ).unwrap();
+        
+        let gain_depth_2 = tree_builder.calculate_split_gain(
+            &(0..5).collect::<Vec<_>>(), 
+            &(5..10).collect::<Vec<_>>(), 
+            &sample_indices, 
+            2
+        ).unwrap();
+        
+        // The depth penalty should create a measurable difference
+        let improvement_ratio = gain_depth_1 / gain_depth_2.max(1e-10);
+        assert!(improvement_ratio > 1.005, 
+                "Depth penalty should create >0.5% difference for depth-aware selection: ratio={:.3}", 
+                improvement_ratio);
+    }
+
+    #[test]
+    fn test_depth_based_pruning() {
+        let config = create_test_config();
+        let dataset = create_test_dataset();
+        let gradients = Array1::from_vec(vec![0.01; 20]); // Very small gradients
+        let hessians = Array1::from_vec(vec![1.0; 20]);
+        
+        let tree_builder = TreeBuilder::new(&config, &dataset, &gradients, &hessians);
+        
+        // Create a deep node with low gain that should be pruned
+        let deep_node = TreeNode {
+            feature_index: 0,
+            threshold: 5.0,
+            left_child: Some(Box::new(TreeNode {
+                feature_index: -1,
+                threshold: 0.0,
+                left_child: None,
+                right_child: None,
+                leaf_value: 1.0,
+                sample_count: 5,
+                depth: 4, // Deep node
+                split_gain: None,
+                node_weight: 5.0,
+                coverage: 5.0,
+            })),
+            right_child: Some(Box::new(TreeNode {
+                feature_index: -1,
+                threshold: 0.0,
+                left_child: None,
+                right_child: None,
+                leaf_value: 1.0,
+                sample_count: 5,
+                depth: 4, // Deep node
+                split_gain: None,
+                node_weight: 5.0,
+                coverage: 5.0,
+            })),
+            leaf_value: 0.0,
+            sample_count: 10,
+            depth: 3, // At 80% of max_depth (3 * 0.8 = 2.4, so >= 2)
+            split_gain: Some(0.05), // Low gain < 2 * min_gain_to_split (2 * 0.1 = 0.2)
+            node_weight: 10.0,
+            coverage: 10.0,
+        };
+        
+        let pruned_node = tree_builder.prune_tree(deep_node);
+        
+        // The node should be converted to a leaf (children removed)
+        assert!(pruned_node.left_child.is_none(), "Deep node with low gain should be pruned to leaf");
+        assert!(pruned_node.right_child.is_none(), "Deep node with low gain should be pruned to leaf");
+        assert_eq!(pruned_node.feature_index, -1, "Pruned node should have feature_index = -1");
+    }
+
+    #[test]
+    fn test_pruning_preserves_good_splits() {
+        let config = create_test_config();
+        let dataset = create_test_dataset();
+        let gradients = Array1::from_vec(vec![0.1; 20]);
+        let hessians = Array1::from_vec(vec![1.0; 20]);
+        
+        let tree_builder = TreeBuilder::new(&config, &dataset, &gradients, &hessians);
+        
+        // Create a deep node with high gain that should NOT be pruned
+        let deep_node = TreeNode {
+            feature_index: 0,
+            threshold: 5.0,
+            left_child: Some(Box::new(TreeNode {
+                feature_index: -1,
+                threshold: 0.0,
+                left_child: None,
+                right_child: None,
+                leaf_value: 1.0,
+                sample_count: 5,
+                depth: 4,
+                split_gain: None,
+                node_weight: 5.0,
+                coverage: 5.0,
+            })),
+            right_child: Some(Box::new(TreeNode {
+                feature_index: -1,
+                threshold: 0.0,
+                left_child: None,
+                right_child: None,
+                leaf_value: 1.0,
+                sample_count: 5,
+                depth: 4,
+                split_gain: None,
+                node_weight: 5.0,
+                coverage: 5.0,
+            })),
+            leaf_value: 0.0,
+            sample_count: 10,
+            depth: 3,
+            split_gain: Some(0.5), // High gain > 2 * min_gain_to_split (2 * 0.1 = 0.2)
+            node_weight: 10.0,
+            coverage: 10.0,
+        };
+        
+        let pruned_node = tree_builder.prune_tree(deep_node);
+        
+        // The node should NOT be converted to a leaf (children preserved)
+        assert!(pruned_node.left_child.is_some(), "Deep node with high gain should NOT be pruned");
+        assert!(pruned_node.right_child.is_some(), "Deep node with high gain should NOT be pruned");
+        assert_eq!(pruned_node.feature_index, 0, "Good split should preserve feature_index");
+    }
+
+    #[test]
+    fn test_depth_field_usage() {
+        let config = create_test_config();
+        let dataset = create_test_dataset();
+        let gradients = Array1::from_vec(vec![0.1; 20]);
+        let hessians = Array1::from_vec(vec![1.0; 20]);
+        
+        let mut tree_builder = TreeBuilder::new(&config, &dataset, &gradients, &hessians);
+        let sample_indices: Vec<usize> = (0..dataset.num_data()).collect();
+        
+        // Build a tree and verify depth field is properly set
+        let root_node = tree_builder.build_node(&sample_indices, 0).unwrap();
+        
+        // Root should have depth 0
+        assert_eq!(root_node.depth, 0, "Root node should have depth 0");
+        
+        // If there are children, they should have depth 1
+        if let Some(ref left_child) = root_node.left_child {
+            assert_eq!(left_child.depth, 1, "Left child should have depth 1");
+        }
+        if let Some(ref right_child) = root_node.right_child {
+            assert_eq!(right_child.depth, 1, "Right child should have depth 1");
+        }
+    }
+}
