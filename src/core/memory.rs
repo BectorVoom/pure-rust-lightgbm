@@ -350,6 +350,16 @@ pub struct MemoryStats {
     pub num_allocations: usize,
 }
 
+/// Memory statistics for individual memory handles.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryHandleStats {
+    pub size_bytes: usize,
+    pub size_elements: usize,
+    pub element_size: usize,
+    pub allocated_at: std::time::SystemTime,
+    pub age_ms: u64,
+}
+
 impl MemoryStats {
     /// Calculate memory utilization as a percentage.
     pub fn utilization(&self) -> f64 {
@@ -367,10 +377,14 @@ impl MemoryStats {
 }
 
 /// Memory pool for efficient allocation and reuse of aligned buffers.
+#[derive(Debug)]
 pub struct MemoryPool<T> {
     available_buffers: Vec<AlignedBuffer<T>>,
     buffer_capacity: usize,
     max_pool_size: usize,
+    total_allocated_bytes: usize,
+    max_memory_bytes: Option<usize>,
+    active_handles: Vec<MemoryHandle<T>>,
 }
 
 impl<T> MemoryPool<T> {
@@ -380,6 +394,25 @@ impl<T> MemoryPool<T> {
             available_buffers: Vec::with_capacity(max_pool_size),
             buffer_capacity,
             max_pool_size,
+            total_allocated_bytes: 0,
+            max_memory_bytes: None,
+            active_handles: Vec::new(),
+        }
+    }
+
+    /// Create a new memory pool with memory size constraints.
+    pub fn with_memory_limit(
+        buffer_capacity: usize,
+        max_pool_size: usize,
+        max_memory_bytes: usize,
+    ) -> Self {
+        MemoryPool {
+            available_buffers: Vec::with_capacity(max_pool_size),
+            buffer_capacity,
+            max_pool_size,
+            total_allocated_bytes: 0,
+            max_memory_bytes: Some(max_memory_bytes),
+            active_handles: Vec::new(),
         }
     }
 
@@ -420,44 +453,175 @@ impl<T> MemoryPool<T> {
 
     /// Allocate a buffer with specified size (for compatibility)
     pub fn allocate<U>(&mut self, size: usize) -> Result<MemoryHandle<U>> {
+        // Check memory constraints
+        if let Some(max_memory) = self.max_memory_bytes {
+            if self.total_allocated_bytes + size > max_memory {
+                return Err(MemoryError::AllocationFailed { size }.into());
+            }
+        }
+
         // Create a handle representing the allocation
-        Ok(MemoryHandle {
-            size,
-            phantom: std::marker::PhantomData,
-        })
+        let handle = MemoryHandle::new(size);
+        self.total_allocated_bytes += size;
+
+        // TODO: Implement proper active memory handle tracking for MemoryPool
+        // The active_handles field is currently unused due to type constraints.
+        // Need to implement a separate tracking mechanism for memory handles
+        // as specified in the design document for memory management optimization.
+        // See: pure_rust_detailed_lightgbm_design_document.md - Memory Management Strategy
+        // Note: We can't store the handle in active_handles here due to type constraints
+        // In a real implementation, we would need a separate tracking mechanism
+
+        Ok(handle)
     }
 
     /// Deallocate a buffer handle (for compatibility)
-    pub fn deallocate<U>(&mut self, _handle: MemoryHandle<U>) -> Result<()> {
-        // Placeholder - in a real implementation this would free the memory
+    pub fn deallocate<U>(&mut self, handle: MemoryHandle<U>) -> Result<()> {
+        // Update memory tracking
+        let size = handle.size_bytes();
+        self.total_allocated_bytes = self.total_allocated_bytes.saturating_sub(size);
         Ok(())
+    }
+
+    /// Get current memory usage in bytes
+    pub fn memory_usage(&self) -> usize {
+        self.total_allocated_bytes
+    }
+
+    /// Get maximum memory limit in bytes (if set)
+    pub fn memory_limit(&self) -> Option<usize> {
+        self.max_memory_bytes
+    }
+
+    /// Get remaining memory capacity in bytes
+    pub fn remaining_memory(&self) -> Option<usize> {
+        self.max_memory_bytes
+            .map(|max| max.saturating_sub(self.total_allocated_bytes))
+    }
+
+    /// Check if memory usage is at or near capacity
+    pub fn is_memory_pressure(&self, threshold_percent: f64) -> bool {
+        if let Some(max_memory) = self.max_memory_bytes {
+            let usage_percent = (self.total_allocated_bytes as f64 / max_memory as f64) * 100.0;
+            usage_percent >= threshold_percent
+        } else {
+            false
+        }
     }
 
     /// Get pool statistics
     pub fn stats(&self) -> MemoryStats {
-        let allocated = self.max_pool_size * self.buffer_capacity * std::mem::size_of::<T>();
-        let used = (self.max_pool_size - self.available_buffers.len())
+        let pool_allocated = self.max_pool_size * self.buffer_capacity * std::mem::size_of::<T>();
+        let pool_used = (self.max_pool_size - self.available_buffers.len())
             * self.buffer_capacity
             * std::mem::size_of::<T>();
+
+        // Include tracked allocations from handles
+        let total_allocated = pool_allocated + self.total_allocated_bytes;
+        let total_used = pool_used + self.total_allocated_bytes;
+
         MemoryStats {
             alignment: ALIGNED_SIZE,
-            allocated_bytes: allocated,
-            used_bytes: used,
+            allocated_bytes: total_allocated,
+            used_bytes: total_used,
             capacity_elements: self.max_pool_size * self.buffer_capacity,
             length_elements: (self.max_pool_size - self.available_buffers.len())
                 * self.buffer_capacity,
-            free_bytes: allocated.saturating_sub(used),
+            free_bytes: total_allocated.saturating_sub(total_used),
             num_allocations: self.max_pool_size - self.available_buffers.len(),
         }
+    }
+
+    /// Get detailed memory usage report
+    pub fn memory_report(&self) -> String {
+        let stats = self.stats();
+        let mut report = format!(
+            "Memory Pool Report:\n\
+             - Pool Capacity: {} buffers\n\
+             - Available Buffers: {}\n\
+             - Buffer Size: {} elements\n\
+             - Total Allocated: {} bytes\n\
+             - Total Used: {} bytes\n\
+             - Utilization: {:.2}%\n",
+            self.max_pool_size,
+            self.available_buffers.len(),
+            self.buffer_capacity,
+            stats.allocated_bytes,
+            stats.used_bytes,
+            stats.utilization()
+        );
+
+        if let Some(limit) = self.max_memory_bytes {
+            report.push_str(&format!(
+                " - Memory Limit: {} bytes\n\
+                 - Memory Usage: {} bytes\n\
+                 - Remaining: {} bytes\n",
+                limit,
+                self.total_allocated_bytes,
+                limit.saturating_sub(self.total_allocated_bytes)
+            ));
+        }
+
+        report
     }
 }
 
 /// Handle representing a memory allocation
 #[derive(Debug)]
 pub struct MemoryHandle<T> {
-    // TODO: implement memory handle size tracking and usage functionality
     size: usize,
+    allocated_at: std::time::SystemTime,
     phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> MemoryHandle<T> {
+    /// Create a new memory handle with the specified size
+    pub fn new(size: usize) -> Self {
+        Self {
+            size,
+            allocated_at: std::time::SystemTime::now(),
+            phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Get the size of the memory allocation in bytes
+    pub fn size_bytes(&self) -> usize {
+        self.size
+    }
+
+    /// Get the size of the memory allocation in elements
+    pub fn size_elements(&self) -> usize {
+        self.size / std::mem::size_of::<T>()
+    }
+
+    /// Get the time when this handle was allocated
+    pub fn allocated_at(&self) -> std::time::SystemTime {
+        self.allocated_at
+    }
+
+    /// Get the age of this allocation in milliseconds
+    pub fn age_ms(&self) -> Result<u64> {
+        self.allocated_at
+            .elapsed()
+            .map(|duration| duration.as_millis() as u64)
+            .map_err(|_| MemoryError::AllocationFailed { size: 0 }.into())
+    }
+
+    /// Check if this handle represents a valid allocation
+    pub fn is_valid(&self) -> bool {
+        self.size > 0
+    }
+
+    /// Get memory usage statistics for this handle
+    pub fn usage_stats(&self) -> MemoryHandleStats {
+        MemoryHandleStats {
+            size_bytes: self.size,
+            size_elements: self.size_elements(),
+            element_size: std::mem::size_of::<T>(),
+            allocated_at: self.allocated_at,
+            age_ms: self.age_ms().unwrap_or(0),
+        }
+    }
 }
 
 /// Create a simplified constructor that doesn't require unwrap
@@ -645,5 +809,67 @@ mod tests {
         // Check that all memory is zeroed
         let slice = unsafe { std::slice::from_raw_parts(buffer.as_ptr(), buffer.capacity()) };
         assert!(slice.iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn test_memory_handle_creation() {
+        let handle: MemoryHandle<i32> = MemoryHandle::new(1024);
+        assert_eq!(handle.size_bytes(), 1024);
+        assert_eq!(handle.size_elements(), 1024 / std::mem::size_of::<i32>());
+        assert!(handle.is_valid());
+        assert!(handle.age_ms().unwrap() >= 0);
+    }
+
+    #[test]
+    fn test_memory_handle_stats() {
+        let handle: MemoryHandle<f64> = MemoryHandle::new(2048);
+        let stats = handle.usage_stats();
+        assert_eq!(stats.size_bytes, 2048);
+        assert_eq!(stats.size_elements, 2048 / std::mem::size_of::<f64>());
+        assert_eq!(stats.element_size, std::mem::size_of::<f64>());
+        assert!(stats.age_ms >= 0);
+    }
+
+    #[test]
+    fn test_memory_pool_with_limits() {
+        let mut pool: MemoryPool<u8> = MemoryPool::with_memory_limit(100, 5, 1000);
+        assert_eq!(pool.memory_usage(), 0);
+        assert_eq!(pool.memory_limit(), Some(1000));
+        assert_eq!(pool.remaining_memory(), Some(1000));
+        assert!(!pool.is_memory_pressure(50.0));
+
+        // Allocate some memory
+        let handle1 = pool.allocate::<u8>(500).unwrap();
+        assert_eq!(pool.memory_usage(), 500);
+        assert_eq!(pool.remaining_memory(), Some(500));
+        assert!(pool.is_memory_pressure(50.0));
+
+        // Try to allocate too much
+        let result = pool.allocate::<u8>(600);
+        assert!(result.is_err());
+
+        // Deallocate and check
+        pool.deallocate(handle1).unwrap();
+        assert_eq!(pool.memory_usage(), 0);
+        assert_eq!(pool.remaining_memory(), Some(1000));
+    }
+
+    #[test]
+    fn test_memory_pool_reporting() {
+        let pool: MemoryPool<i32> = MemoryPool::with_memory_limit(50, 2, 500);
+        let report = pool.memory_report();
+        assert!(report.contains("Memory Pool Report"));
+        assert!(report.contains("Memory Limit: 500 bytes"));
+    }
+
+    #[test]
+    fn test_memory_handle_age() {
+        let handle: MemoryHandle<u16> = MemoryHandle::new(256);
+
+        // Sleep for a short time to test age calculation
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let age = handle.age_ms().unwrap();
+        assert!(age >= 10);
     }
 }
