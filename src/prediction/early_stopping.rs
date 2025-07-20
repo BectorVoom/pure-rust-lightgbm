@@ -64,7 +64,7 @@ impl PredictionEarlyStopping {
         // Implement predictions-based early stopping decision using convergence criteria
         let recent_window = self.patience;
         let total_len = confidence_history.len();
-        
+
         if total_len < recent_window * 2 {
             // Not enough history for convergence analysis
             return false;
@@ -72,18 +72,21 @@ impl PredictionEarlyStopping {
 
         // Calculate prediction stability using confidence variance
         let recent_confidence = &confidence_history[total_len - recent_window..];
-        let previous_confidence = &confidence_history[total_len - recent_window * 2..total_len - recent_window];
-        
+        let previous_confidence =
+            &confidence_history[total_len - recent_window * 2..total_len - recent_window];
+
         // Calculate average confidence for both windows
         let recent_avg = recent_confidence.iter().sum::<f64>() / recent_confidence.len() as f64;
-        let previous_avg = previous_confidence.iter().sum::<f64>() / previous_confidence.len() as f64;
-        
+        let previous_avg =
+            previous_confidence.iter().sum::<f64>() / previous_confidence.len() as f64;
+
         // Calculate confidence variance for stability assessment
         let recent_variance = recent_confidence
             .iter()
             .map(|&x| (x - recent_avg).powi(2))
-            .sum::<f64>() / recent_confidence.len() as f64;
-        
+            .sum::<f64>()
+            / recent_confidence.len() as f64;
+
         // Convergence criteria:
         // 1. Recent confidence is above threshold
         // 2. Confidence improvement has plateaued (relative change < 1%)
@@ -96,7 +99,7 @@ impl PredictionEarlyStopping {
         };
         let improvement_plateaued = relative_improvement < 0.01; // Less than 1% change
         let predictions_stable = recent_variance < 0.001; // Low variance indicates stability
-        
+
         confidence_above_threshold && improvement_plateaued && predictions_stable
     }
 
@@ -163,10 +166,8 @@ impl EarlyStoppingTracker {
             self.confidence_history.remove(0);
         }
 
-        self.config.should_stop(
-            self.current_iteration,
-            &self.confidence_history,
-        )
+        self.config
+            .should_stop(self.current_iteration, &self.confidence_history)
     }
 
     /// Reset tracker state

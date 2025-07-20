@@ -198,51 +198,56 @@ pub mod boosting;
 pub use core::{
     constants::*,
     error::{LightGBMError, Result},
-    memory::{AlignedBuffer, MemoryPool, MemoryStats, MemoryHandle},
-    types::*,
+    memory::{AlignedBuffer, MemoryHandle, MemoryPool, MemoryStats},
     traits::*,
+    types::*,
 };
 
 // Re-export configuration functionality
 pub use config::{
     core::{Config, ConfigBuilder, ConfigError},
-    device::{DeviceConfig, DeviceCapabilities},
+    device::{DeviceCapabilities, DeviceConfig},
     objective::{ObjectiveConfig, ObjectiveFunction},
-    validation::{ConfigValidator, ValidationResult, ValidationError},
+    validation::{ConfigValidator, ValidationError, ValidationResult},
 };
 
 // Re-export dataset functionality
 pub use dataset::{
+    binning::{BinMapper, BinType, FeatureBinner, MissingType},
     dataset::{Dataset, DatasetBuilder, DatasetInfo, DatasetMetadata},
-    binning::{BinMapper, BinType, MissingType, FeatureBinner},
     DatasetConfig, DatasetFactory, DatasetStatistics,
 };
 
 // Re-export hyperparameter optimization functionality
 pub use hyperopt::{
+    cross_validate, optimize_hyperparameters, CrossValidationConfig, CrossValidationResult,
     HyperparameterSpace, OptimizationConfig, OptimizationDirection, OptimizationResult,
-    CrossValidationConfig, CrossValidationResult, optimize_hyperparameters, cross_validate,
 };
 
 // Re-export ensemble functionality
 pub use ensemble::{
-    EnsembleMethod, EnsembleConfig, ModelEnsemble, ClassificationEnsemble,
+    ClassificationEnsemble, EnsembleConfig, EnsembleMethod, ModelEnsemble, VotingStrategy,
 };
 
 // Re-export metrics evaluation functionality
 pub use metrics_eval::{
-    RegressionMetrics, ClassificationMetrics, MulticlassMetrics,
-    evaluate_regression, evaluate_binary_classification, evaluate_multiclass_classification,
+    evaluate_binary_classification, evaluate_multiclass_classification, evaluate_regression,
+    ClassificationMetrics, MulticlassMetrics, RegressionMetrics,
 };
 
 // Re-export prediction functionality
+pub use prediction::{HistogramPool, SplitFinder, SplitInfo};
+
+// Re-export new prediction module structure
 pub use prediction::{
-    PredictionConfig, Predictor, HistogramPool, SplitFinder, SplitInfo,
+    PredictionConfig, Predictor, PredictorTrait,
+    shap::{SHAPCalculator, SHAPConfig},
+    feature_importance::{FeatureImportanceCalculator, ImportanceType},
 };
 
 // Re-export boosting functionality
 pub use boosting::{
-    GBDT, create_objective_function, RegressionObjective, BinaryObjective, MulticlassObjective,
+    create_objective_function, BinaryObjective, MulticlassObjective, RegressionObjective, GBDT,
 };
 
 // Version information
@@ -293,7 +298,6 @@ pub fn capabilities() -> core::CoreCapabilities {
     core::core_capabilities()
 }
 
-
 // Dataset implementation moved to dataset module
 
 /// LGBMRegressor implementation using GBDT
@@ -319,8 +323,11 @@ impl LGBMRegressor {
 
     /// Train the model on the given dataset.
     pub fn fit(&mut self, dataset: &Dataset) -> Result<()> {
-        log::info!("Training LGBMRegressor with {} samples, {} features",
-                  dataset.num_data(), dataset.num_features());
+        log::info!(
+            "Training LGBMRegressor with {} samples, {} features",
+            dataset.num_data(),
+            dataset.num_features()
+        );
 
         // Ensure we have regression objective
         let mut training_config = self.config.clone();
@@ -341,8 +348,9 @@ impl LGBMRegressor {
 
     /// Make predictions on the given features.
     pub fn predict(&self, features: &ndarray::Array2<f32>) -> Result<ndarray::Array1<Score>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         log::debug!("Making predictions on {} samples", features.nrows());
 
@@ -352,7 +360,9 @@ impl LGBMRegressor {
 
     /// Add validation dataset for early stopping
     pub fn add_validation_data(&mut self, _dataset: &Dataset) -> Result<()> {
-        Err(LightGBMError::not_implemented("LGBMRegressor::add_validation_data"))
+        Err(LightGBMError::not_implemented(
+            "LGBMRegressor::add_validation_data",
+        ))
     }
 
     /// Get number of trained iterations
@@ -363,21 +373,32 @@ impl LGBMRegressor {
 
     /// Get training history
     pub fn training_history(&self) -> Result<TrainingHistory> {
-        Err(LightGBMError::not_implemented("LGBMRegressor::training_history"))
+        Err(LightGBMError::not_implemented(
+            "LGBMRegressor::training_history",
+        ))
     }
 
     /// Get feature importance
-    pub fn feature_importance(&self, importance_type: ImportanceType) -> Result<ndarray::Array1<f64>> {
+    pub fn feature_importance(
+        &self,
+        importance_type: ImportanceType,
+    ) -> Result<ndarray::Array1<f64>> {
         match &self.model {
             Some(model) => model.feature_importance(&importance_type),
-            None => Err(LightGBMError::training("Model not trained yet. Call fit() first.")),
+            None => Err(LightGBMError::training(
+                "Model not trained yet. Call fit() first.",
+            )),
         }
     }
 
     /// Predict feature contributions (SHAP values)
-    pub fn predict_contrib(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array2<f64>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+    pub fn predict_contrib(
+        &self,
+        features: &ndarray::ArrayView2<'_, f32>,
+    ) -> Result<ndarray::Array2<f64>> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         log::debug!("Calculating SHAP values for {} samples", features.nrows());
 
@@ -388,33 +409,43 @@ impl LGBMRegressor {
 
     /// Calculate SHAP values for a single sample
     pub fn predict_contrib_single(&self, features: &[f32]) -> Result<ndarray::Array1<f64>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         model.predict_contrib_single(features)
     }
 
     /// Get a detailed explanation for a single prediction
     pub fn explain_prediction(&self, features: &[f32]) -> Result<boosting::SHAPExplanation> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         model.explain_prediction(features)
     }
 
     /// Calculate SHAP interaction values between features
-    pub fn predict_contrib_interactions(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array3<f64>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+    pub fn predict_contrib_interactions(
+        &self,
+        features: &ndarray::ArrayView2<'_, f32>,
+    ) -> Result<ndarray::Array3<f64>> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         let features_owned = features.to_owned();
         model.predict_contrib_interactions(&features_owned)
     }
 
     /// Validate SHAP values for correctness
-    pub fn validate_shap_values(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<boosting::SHAPValidationStats> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+    pub fn validate_shap_values(
+        &self,
+        features: &ndarray::ArrayView2<'_, f32>,
+    ) -> Result<boosting::SHAPValidationStats> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         let features_owned = features.to_owned();
         model.validate_shap_values(&features_owned)
@@ -422,12 +453,14 @@ impl LGBMRegressor {
 
     /// Save model to file
     pub fn save_model<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::model("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::model("Model has not been trained yet. Call fit() first.")
+        })?;
 
         // Simple JSON serialization for now
-        let serialized = serde_json::to_string_pretty(model)
-            .map_err(|e| LightGBMError::serialization(format!("Failed to serialize model: {}", e)))?;
+        let serialized = serde_json::to_string_pretty(model).map_err(|e| {
+            LightGBMError::serialization(format!("Failed to serialize model: {}", e))
+        })?;
 
         std::fs::write(path, serialized)
             .map_err(|e| LightGBMError::io_error(format!("Failed to write model file: {}", e)))?;
@@ -446,8 +479,9 @@ impl LGBMRegressor {
             .map_err(|e| LightGBMError::io_error(format!("Failed to read model file: {}", e)))?;
 
         // Deserialize the GBDT model
-        let gbdt: boosting::GBDT = serde_json::from_str(&model_data)
-            .map_err(|e| LightGBMError::serialization(format!("Failed to deserialize model: {}", e)))?;
+        let gbdt: boosting::GBDT = serde_json::from_str(&model_data).map_err(|e| {
+            LightGBMError::serialization(format!("Failed to deserialize model: {}", e))
+        })?;
 
         // Extract configuration from the loaded model
         let config = gbdt.config().clone();
@@ -490,8 +524,11 @@ impl LGBMClassifier {
 
     /// Train the model on the given dataset.
     pub fn fit(&mut self, dataset: &Dataset) -> Result<()> {
-        log::info!("Training LGBMClassifier with {} samples, {} features",
-                  dataset.num_data(), dataset.num_features());
+        log::info!(
+            "Training LGBMClassifier with {} samples, {} features",
+            dataset.num_data(),
+            dataset.num_features()
+        );
 
         // Ensure we have classification objective
         let mut training_config = self.config.clone();
@@ -519,7 +556,11 @@ impl LGBMClassifier {
         // For binary classification, threshold at 0.5
         let mut predictions = ndarray::Array1::zeros(probabilities.nrows());
         for i in 0..probabilities.nrows() {
-            predictions[i] = if probabilities[[i, 0]] > 0.5 { 1.0 } else { 0.0 };
+            predictions[i] = if probabilities[[i, 0]] > 0.5 {
+                1.0
+            } else {
+                0.0
+            };
         }
 
         Ok(predictions)
@@ -527,10 +568,14 @@ impl LGBMClassifier {
 
     /// Predict class probabilities.
     pub fn predict_proba(&self, features: &ndarray::Array2<f32>) -> Result<ndarray::Array2<Score>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
-        log::debug!("Making probability predictions on {} samples", features.nrows());
+        log::debug!(
+            "Making probability predictions on {} samples",
+            features.nrows()
+        );
 
         let raw_predictions = model.predict(features)?;
 
@@ -547,12 +592,14 @@ impl LGBMClassifier {
 
     /// Save model to file
     pub fn save_model<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::model("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::model("Model has not been trained yet. Call fit() first.")
+        })?;
 
         // Simple JSON serialization for now
-        let serialized = serde_json::to_string_pretty(model)
-            .map_err(|e| LightGBMError::serialization(format!("Failed to serialize model: {}", e)))?;
+        let serialized = serde_json::to_string_pretty(model).map_err(|e| {
+            LightGBMError::serialization(format!("Failed to serialize model: {}", e))
+        })?;
 
         std::fs::write(path, serialized)
             .map_err(|e| LightGBMError::io_error(format!("Failed to write model file: {}", e)))?;
@@ -571,8 +618,9 @@ impl LGBMClassifier {
             .map_err(|e| LightGBMError::io_error(format!("Failed to read model file: {}", e)))?;
 
         // Deserialize the GBDT model
-        let gbdt: boosting::GBDT = serde_json::from_str(&model_data)
-            .map_err(|e| LightGBMError::serialization(format!("Failed to deserialize model: {}", e)))?;
+        let gbdt: boosting::GBDT = serde_json::from_str(&model_data).map_err(|e| {
+            LightGBMError::serialization(format!("Failed to deserialize model: {}", e))
+        })?;
 
         // Extract configuration from the loaded model
         let config = gbdt.config().clone();
@@ -586,17 +634,26 @@ impl LGBMClassifier {
     }
 
     /// Get feature importance
-    pub fn feature_importance(&self, importance_type: ImportanceType) -> Result<ndarray::Array1<f64>> {
+    pub fn feature_importance(
+        &self,
+        importance_type: ImportanceType,
+    ) -> Result<ndarray::Array1<f64>> {
         match &self.model {
             Some(model) => model.feature_importance(&importance_type),
-            None => Err(LightGBMError::training("Model not trained yet. Call fit() first.")),
+            None => Err(LightGBMError::training(
+                "Model not trained yet. Call fit() first.",
+            )),
         }
     }
 
     /// Predict feature contributions (SHAP values) for classification
-    pub fn predict_contrib(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array2<f64>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+    pub fn predict_contrib(
+        &self,
+        features: &ndarray::ArrayView2<'_, f32>,
+    ) -> Result<ndarray::Array2<f64>> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         log::debug!("Calculating SHAP values for {} samples", features.nrows());
 
@@ -607,33 +664,43 @@ impl LGBMClassifier {
 
     /// Calculate SHAP values for a single sample (classification)
     pub fn predict_contrib_single(&self, features: &[f32]) -> Result<ndarray::Array1<f64>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         model.predict_contrib_single(features)
     }
 
     /// Get a detailed explanation for a single classification prediction
     pub fn explain_prediction(&self, features: &[f32]) -> Result<boosting::SHAPExplanation> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         model.explain_prediction(features)
     }
 
     /// Calculate SHAP interaction values between features (classification)
-    pub fn predict_contrib_interactions(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<ndarray::Array3<f64>> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+    pub fn predict_contrib_interactions(
+        &self,
+        features: &ndarray::ArrayView2<'_, f32>,
+    ) -> Result<ndarray::Array3<f64>> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         let features_owned = features.to_owned();
         model.predict_contrib_interactions(&features_owned)
     }
 
     /// Validate SHAP values for correctness (classification)
-    pub fn validate_shap_values(&self, features: &ndarray::ArrayView2<'_, f32>) -> Result<boosting::SHAPValidationStats> {
-        let model = self.model.as_ref()
-            .ok_or_else(|| LightGBMError::prediction("Model has not been trained yet. Call fit() first."))?;
+    pub fn validate_shap_values(
+        &self,
+        features: &ndarray::ArrayView2<'_, f32>,
+    ) -> Result<boosting::SHAPValidationStats> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            LightGBMError::prediction("Model has not been trained yet. Call fit() first.")
+        })?;
 
         let features_owned = features.to_owned();
         model.validate_shap_values(&features_owned)
@@ -696,7 +763,8 @@ mod tests {
             .num_iterations(500)
             .num_leaves(127)
             .objective(ObjectiveType::Binary)
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         assert_eq!(config.learning_rate, 0.05);
         assert_eq!(config.num_iterations, 500);

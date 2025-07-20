@@ -11,6 +11,7 @@ use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use polars::datatypes::AnyValue;
 use polars::prelude::*;
 
 /// Polars-specific configuration
@@ -55,31 +56,37 @@ impl Default for PolarsConfig {
     }
 }
 
+/// Polars-based data loader for various file formats
+///
+/// Supports CSV, Parquet, IPC (Arrow), and other formats through the Polars library.
+#[derive(Debug)]
 pub struct PolarsLoader {
     /// Loader configuration
     config: LoaderConfig,
     /// Polars-specific configuration
     polars_config: PolarsConfig,
     /// Dataset configuration
+    // TODO: implement dataset_config usage in data loading pipeline
     dataset_config: DatasetConfig,
 }
 
 impl PolarsLoader {
-    /// Create a new Polars loader
+    /// Create a new Polars loader with the given dataset configuration
     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
         let polars_config = PolarsConfig {
             target_column: dataset_config
                 .target_column
+                .clone()
                 .unwrap_or_else(|| "target".into()),
-            feature_columns: dataset_config.feature_columns,
-            weight_column: dataset_config.weight_column,
-            group_column: dataset_config.group_column,
+            feature_columns: dataset_config.feature_columns.clone(),
+            weight_column: dataset_config.weight_column.clone(),
+            group_column: dataset_config.group_column.clone(),
             ..Default::default()
         };
 
         Ok(PolarsLoader {
             config: LoaderConfig {
-                dataset_config: dataset_config,
+                dataset_config: dataset_config.clone(),
                 ..Default::default()
             },
             polars_config,
@@ -186,10 +193,22 @@ impl PolarsLoader {
         // Direct DataFrame reading - simpler and more reliable
         let df = CsvReadOptions::default()
             .with_has_header(true)
-            .try_into_reader_with_file_path(Some("iris.csv".into()))
-            .unwrap()
+            .try_into_reader_with_file_path(Some(path.to_path_buf()))
+            .map_err(|e| {
+                LightGBMError::data_loading(format!(
+                    "Failed to create CSV reader for {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?
             .finish()
-            .unwrap();
+            .map_err(|e| {
+                LightGBMError::data_loading(format!(
+                    "Failed to read CSV file {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
 
         return self.load_dataframe(&df);
     }
@@ -236,7 +255,31 @@ impl PolarsLoader {
         // Convert to Dataset
         self.load_dataframe(&df)
     }
+    /// Load a dataset from an IPC (Arrow) file
+    pub fn load_ipc<P: AsRef<Path>>(&self, path: P) -> Result<Dataset> {
+        log::info!("Loading IPC file: {:?}", path.as_ref());
 
+        // Create memory-mapped IPC reader - using the static method for memory mapping
+        let df = LazyFrame::scan_ipc(&path, Default::default())
+            .map_err(|e| {
+                LightGBMError::data_loading(format!(
+                    "Failed to scan IPC file {:?}: {}",
+                    path.as_ref(),
+                    e
+                ))
+            })?
+            .collect()
+            .map_err(|e| {
+                LightGBMError::data_loading(format!(
+                    "Failed to collect IPC file {:?}: {}",
+                    path.as_ref(),
+                    e
+                ))
+            })?;
+
+        // Convert to Dataset
+        self.load_dataframe(&df)
+    }
     /// Apply Polars optimizations to LazyFrame
     fn apply_optimizations(&self, lazy_frame: LazyFrame) -> Result<LazyFrame> {
         let mut optimized = lazy_frame;
@@ -281,7 +324,11 @@ impl PolarsLoader {
         }
         let target_column = &self.polars_config.target_column;
         // Check if target column exists
-        if !df.get_column_names_str().contains(target_column) {
+        if !df
+            .get_column_names()
+            .iter()
+            .any(|col| col.as_str() == target_column.as_str())
+        {
             return Err(LightGBMError::data_loading(format!(
                 "Target column '{}' not found in DataFrame",
                 self.polars_config.target_column
@@ -290,9 +337,12 @@ impl PolarsLoader {
 
         // Check if specified feature columns exist
         if let Some(ref feature_cols) = self.polars_config.feature_columns {
-            let df_columns: Vec<&str> = df.get_column_names_str();
             for feature_col in feature_cols {
-                if !df_columns.contains(feature_col) {
+                if !df
+                    .get_column_names()
+                    .iter()
+                    .any(|col| col.as_str() == feature_col.as_str())
+                {
                     return Err(LightGBMError::data_loading(format!(
                         "Feature column '{}' not found in DataFrame",
                         feature_col
@@ -303,7 +353,11 @@ impl PolarsLoader {
 
         // Check if weight column exists
         if let Some(ref weight_col) = self.polars_config.weight_column {
-            if !df.get_column_names().contains(*weight_col.into()) {
+            if !df
+                .get_column_names()
+                .iter()
+                .any(|col| col.as_str() == weight_col.as_str())
+            {
                 return Err(LightGBMError::data_loading(format!(
                     "Weight column '{}' not found in DataFrame",
                     weight_col
@@ -313,7 +367,11 @@ impl PolarsLoader {
 
         // Check if group column exists
         if let Some(ref group_col) = self.polars_config.group_column {
-            if !df.get_column_names().contains(&group_col) {
+            if !df
+                .get_column_names()
+                .iter()
+                .any(|col| col.as_str() == group_col.as_str())
+            {
                 return Err(LightGBMError::data_loading(format!(
                     "Group column '{}' not found in DataFrame",
                     group_col
@@ -331,7 +389,7 @@ impl PolarsLoader {
         } else {
             // Use all columns except target, weight, and group columns
             let mut excluded_columns = std::collections::HashSet::new();
-            excluded_columns.insert(self.polars_config.target_column);
+            excluded_columns.insert(self.polars_config.target_column.as_str());
 
             if let Some(ref weight_col) = self.polars_config.weight_column {
                 excluded_columns.insert(weight_col.as_str());
@@ -344,8 +402,8 @@ impl PolarsLoader {
             let feature_columns: Vec<PlSmallStr> = df
                 .get_column_names()
                 .into_iter()
-                .filter(|&col| !excluded_columns.contains(col))
-                .map(|col| col.to_string())
+                .filter(|&col| !excluded_columns.contains(col.as_str()))
+                .map(|col| col.clone())
                 .collect();
 
             if feature_columns.is_empty() {
@@ -439,7 +497,7 @@ impl PolarsLoader {
     fn detect_missing_values_from_dataframe(
         &self,
         df: &DataFrame,
-        feature_cols: Vec<PlSmallStr>,
+        feature_cols: &[PlSmallStr],
     ) -> Result<Option<Array2<bool>>> {
         let num_rows = df.height();
         let num_features = feature_cols.len();
@@ -459,17 +517,11 @@ impl PolarsLoader {
             if series.null_count() > 0 {
                 has_missing = true;
 
-                // Mark missing values using the is_null method
-                let is_null_series = series.is_null();
-                let is_null_array = is_null_series.bool().map_err(|e| {
-                    LightGBMError::data_loading(format!(
-                        "Failed to check nulls in {}: {}",
-                        col_name, e
-                    ))
-                })?;
-
-                for (row_idx, opt_is_null) in is_null_array.into_iter().enumerate() {
-                    missing_mask[[row_idx, feat_idx]] = opt_is_null.unwrap_or(false);
+                // Mark missing values by checking each value individually
+                for row_idx in 0..num_rows {
+                    // Check if this specific value is null
+                    let value = series.get(row_idx).unwrap_or(AnyValue::Null);
+                    missing_mask[[row_idx, feat_idx]] = value.is_null();
                 }
             }
         }
@@ -763,6 +815,8 @@ impl DataLoader for PolarsLoader {
             self.load_csv(path)
         } else if path_str.ends_with(".parquet") {
             self.load_parquet(path)
+        } else if path_str.ends_with(".ipc") || path_str.ends_with(".arrow") {
+            self.load_ipc(path)
         } else {
             Err(LightGBMError::data_loading(format!(
                 "Unsupported file format for Polars loader: {}",
@@ -809,7 +863,7 @@ mod tests {
     #[test]
     fn test_polars_config_default() {
         let config = PolarsConfig::default();
-        assert_eq!(config.target_column, "target".into());
+        assert_eq!(config.target_column, PlSmallStr::from_static("target"));
         assert!(config.lazy_evaluation);
         assert!(config.parallel);
         assert!(config.projection_pushdown);
@@ -818,9 +872,13 @@ mod tests {
 
     #[test]
     fn test_polars_loader_creation() -> Result<()> {
-        let dataset_config = DatasetConfig::new().with_target_column("target".into());
+        let dataset_config =
+            DatasetConfig::new().with_target_column(PlSmallStr::from_static("target"));
         let loader = PolarsLoader::new(dataset_config)?;
-        assert_eq!(loader.polars_config().target_column, "target".into());
+        assert_eq!(
+            loader.polars_config().target_column,
+            PlSmallStr::from_static("target")
+        );
         Ok(())
     }
 
@@ -829,18 +887,30 @@ mod tests {
         let dataset_config = DatasetConfig::default();
         let loader = PolarsLoader::new(dataset_config)?
             .with_target_column("label")
-            .with_feature_columns(vec!["feat1".into(), "feat2".into()])
+            .with_feature_columns(vec![
+                PlSmallStr::from_static("feat1"),
+                PlSmallStr::from_static("feat2"),
+            ])
             .with_weight_column("weight")
             .with_lazy_evaluation(false)
             .with_chunk_size(5000)
             .with_parallel(false);
 
-        assert_eq!(loader.polars_config().target_column, "label".into());
+        assert_eq!(
+            loader.polars_config().target_column,
+            PlSmallStr::from_static("label")
+        );
         assert_eq!(
             loader.polars_config().feature_columns,
-            Some(vec!["feat1".into(), "feat2".into()])
+            Some(vec![
+                PlSmallStr::from_static("feat1"),
+                PlSmallStr::from_static("feat2")
+            ])
         );
-        assert_eq!(loader.polars_config().weight_column, Some("weight".into()));
+        assert_eq!(
+            loader.polars_config().weight_column,
+            Some(PlSmallStr::from_static("weight"))
+        );
         assert!(!loader.polars_config().lazy_evaluation);
         assert_eq!(loader.polars_config().chunk_size, Some(5000));
         assert!(!loader.polars_config().parallel);
@@ -860,7 +930,8 @@ mod tests {
         })?;
 
         // Create loader and load DataFrame
-        let dataset_config = DatasetConfig::new().with_target_column("target".into());
+        let dataset_config =
+            DatasetConfig::new().with_target_column(PlSmallStr::from_static("target"));
         let loader = PolarsLoader::new(dataset_config)?;
         let dataset = loader.load_dataframe(&df)?;
 
@@ -900,7 +971,8 @@ mod tests {
         })?;
 
         // Create loader and load DataFrame
-        let dataset_config = DatasetConfig::new().with_target_column("target");
+        let dataset_config =
+            DatasetConfig::new().with_target_column(PlSmallStr::from_static("target"));
         let loader = PolarsLoader::new(dataset_config)?;
         let dataset = loader.load_dataframe(&df)?;
 
@@ -943,6 +1015,139 @@ mod tests {
         assert!(estimate.total_estimated > 0);
         assert_eq!(estimate.num_rows, 3);
         assert_eq!(estimate.num_cols, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn test_polars_parquet_loading_implementation() -> Result<()> {
+        use tempfile::NamedTempFile;
+
+        // Create a test DataFrame
+        let df = df! [
+            "feature1" => [1.0f64, 2.0, 3.0, 4.0],
+            "feature2" => [10.0f64, 20.0, 30.0, 40.0],
+            "target" => [0i32, 1, 0, 1],
+        ]
+        .map_err(|e| {
+            LightGBMError::data_loading(format!("Failed to create test DataFrame: {}", e))
+        })?;
+
+        // Create a temporary parquet file
+        let temp_file = NamedTempFile::new().map_err(|e| {
+            LightGBMError::data_loading(format!("Failed to create temp file: {}", e))
+        })?;
+        let parquet_path = temp_file.path().with_extension("parquet");
+
+        // Write DataFrame to Parquet file
+        let mut file = std::fs::File::create(&parquet_path).map_err(|e| {
+            LightGBMError::data_loading(format!("Failed to create parquet file: {}", e))
+        })?;
+        ParquetWriter::new(&mut file)
+            .finish(&mut df.clone())
+            .map_err(|e| {
+                LightGBMError::data_loading(format!("Failed to write parquet file: {}", e))
+            })?;
+        drop(file);
+
+        // Test that load_parquet works (this is the key test for Issue #40)
+        let dataset_config =
+            DatasetConfig::new().with_target_column(PlSmallStr::from_static("target"));
+
+        let loader = PolarsLoader::new(dataset_config)?;
+
+        // This should NOT return a NotImplemented error anymore
+        let dataset = loader.load_parquet(&parquet_path)?;
+
+        // Verify the dataset was loaded correctly
+        assert_eq!(dataset.num_data(), 4);
+        assert_eq!(dataset.num_features(), 2);
+
+        // Verify feature names
+        let feature_names = dataset.feature_names().unwrap();
+        assert_eq!(feature_names.len(), 2);
+        assert!(feature_names.contains(&PlSmallStr::from_static("feature1")));
+        assert!(feature_names.contains(&PlSmallStr::from_static("feature2")));
+
+        // Verify data values
+        let features = dataset.features();
+        assert_eq!(features[[0, 0]], 1.0);
+        assert_eq!(features[[1, 1]], 20.0);
+
+        let labels = dataset.labels();
+        assert_eq!(labels[0], 0.0);
+        assert_eq!(labels[1], 1.0);
+
+        // Clean up
+        if parquet_path.exists() {
+            std::fs::remove_file(&parquet_path).ok();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_polars_memory_mapped_ipc_loading() -> Result<()> {
+        use polars::prelude::*;
+        use tempfile::NamedTempFile;
+
+        // Create a test DataFrame
+        let df = df! [
+            "feature1" => [1.0f64, 2.0, 3.0, 4.0],
+            "feature2" => [10.0f64, 20.0, 30.0, 40.0],
+            "target" => [0i32, 1, 0, 1],
+        ]
+        .map_err(|e| {
+            LightGBMError::data_loading(format!("Failed to create test DataFrame: {}", e))
+        })?;
+
+        // Create a temporary IPC file
+        let temp_file = NamedTempFile::new().map_err(|e| {
+            LightGBMError::data_loading(format!("Failed to create temp file: {}", e))
+        })?;
+        let ipc_path = temp_file.path().with_extension("ipc");
+
+        // Write DataFrame to IPC file
+        let mut file = std::fs::File::create(&ipc_path).map_err(|e| {
+            LightGBMError::data_loading(format!("Failed to create IPC file: {}", e))
+        })?;
+        IpcWriter::new(&mut file)
+            .finish(&mut df.clone())
+            .map_err(|e| LightGBMError::data_loading(format!("Failed to write IPC file: {}", e)))?;
+        drop(file);
+
+        // Test that load_ipc works (this is the key test for Issue #42)
+        let dataset_config =
+            DatasetConfig::new().with_target_column(PlSmallStr::from_static("target"));
+
+        let loader = PolarsLoader::new(dataset_config)?;
+
+        // This should NOT return a NotImplemented error anymore
+        let dataset = loader.load_ipc(&ipc_path)?;
+
+        // Verify the dataset was loaded correctly
+        assert_eq!(dataset.num_data(), 4);
+        assert_eq!(dataset.num_features(), 2);
+
+        // Verify feature names
+        let feature_names = dataset.feature_names().unwrap();
+        assert_eq!(feature_names.len(), 2);
+        assert!(feature_names.contains(&PlSmallStr::from_static("feature1")));
+        assert!(feature_names.contains(&PlSmallStr::from_static("feature2")));
+
+        // Verify data values
+        let features = dataset.features();
+        assert_eq!(features[[0, 0]], 1.0);
+        assert_eq!(features[[1, 1]], 20.0);
+
+        let labels = dataset.labels();
+        assert_eq!(labels[0], 0.0);
+        assert_eq!(labels[1], 1.0);
+
+        // Clean up
+        if ipc_path.exists() {
+            std::fs::remove_file(&ipc_path).ok();
+        }
+
         Ok(())
     }
 }

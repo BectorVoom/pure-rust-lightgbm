@@ -4,28 +4,31 @@
 //! essential for efficient histogram construction in gradient boosting. It supports
 //! both numerical and categorical features with various binning strategies.
 
+pub mod categorical;
 pub mod mapper;
 pub mod numerical;
-pub mod categorical;
 
 // Re-export commonly used types
-pub use mapper::{BinMapper, BinType, MissingType, BinConfig};
-pub use numerical::NumericalBinner;
 pub use categorical::CategoricalBinner;
+pub use mapper::{BinConfig, BinMapper, BinType, MissingType};
+pub use numerical::NumericalBinner;
 
-use crate::core::types::*;
-use crate::core::error::{Result, LightGBMError};
 use crate::core::constants::*;
+use crate::core::error::{LightGBMError, Result};
+use crate::core::types::*;
 use ndarray::Array2;
 use serde::{Deserialize, Serialize};
 
 /// Feature binner that handles both numerical and categorical features
+#[derive(Debug)]
 pub struct FeatureBinner {
     /// Binning configuration
     config: BinningConfig,
     /// Maximum number of bins per feature
+    // TODO: implement max_bins usage in binning algorithm
     max_bins: usize,
     /// Minimum data points per bin
+    // TODO: implement min_data_per_bin enforcement in binning
     min_data_per_bin: usize,
     /// Bin mappers for each feature
     bin_mappers: Vec<BinMapper>,
@@ -52,7 +55,7 @@ pub struct BinningConfig {
     pub categorical_features: Option<Vec<usize>>,
     /// Force column-wise binning
     pub force_col_wise: bool,
-    /// Force row-wise binning  
+    /// Force row-wise binning
     pub force_row_wise: bool,
     /// Enable pre-filtering
     pub pre_filter: bool,
@@ -154,10 +157,10 @@ impl FeatureBinner {
     /// Create a new feature binner
     pub fn new(config: BinningConfig) -> Result<Self> {
         config.validate()?;
-        
+
         let max_bins = config.max_bins;
         let min_data_per_bin = config.min_data_per_bin;
-        
+
         Ok(FeatureBinner {
             config,
             max_bins,
@@ -167,12 +170,16 @@ impl FeatureBinner {
             missing_types: Vec::new(),
         })
     }
-    
+
     /// Fit the binner on feature data
-    pub fn fit(&mut self, features: &Array2<f32>, feature_types: Option<&[FeatureType]>) -> Result<()> {
+    pub fn fit(
+        &mut self,
+        features: &Array2<f32>,
+        feature_types: Option<&[FeatureType]>,
+    ) -> Result<()> {
         let num_features = features.ncols();
         let _num_samples = features.nrows();
-        
+
         // Determine feature types
         self.feature_types = match feature_types {
             Some(types) => {
@@ -186,16 +193,16 @@ impl FeatureBinner {
             }
             None => self.auto_detect_feature_types(features),
         };
-        
+
         // Initialize bin mappers
         self.bin_mappers = Vec::with_capacity(num_features);
         self.missing_types = Vec::with_capacity(num_features);
-        
+
         // Process each feature
         for feature_idx in 0..num_features {
             let feature_data = features.column(feature_idx);
             let feature_type = self.feature_types[feature_idx];
-            
+
             let (bin_mapper, missing_type) = match feature_type {
                 FeatureType::Numerical => {
                     let binner = NumericalBinner::new(self.config.clone())?;
@@ -206,14 +213,14 @@ impl FeatureBinner {
                     binner.fit(&feature_data)?
                 }
             };
-            
+
             self.bin_mappers.push(bin_mapper);
             self.missing_types.push(missing_type);
         }
-        
+
         Ok(())
     }
-    
+
     /// Transform features to bins
     pub fn transform(&self, features: &Array2<f32>) -> Result<Array2<BinIndex>> {
         if features.ncols() != self.bin_mappers.len() {
@@ -222,24 +229,24 @@ impl FeatureBinner {
                 format!("input features: {}", features.ncols()),
             ));
         }
-        
+
         let num_samples = features.nrows();
         let num_features = features.ncols();
         let mut binned_features = Array2::zeros((num_samples, num_features));
-        
+
         for feature_idx in 0..num_features {
             let feature_data = features.column(feature_idx);
             let bin_mapper = &self.bin_mappers[feature_idx];
-            
+
             for (sample_idx, &value) in feature_data.iter().enumerate() {
                 let bin = bin_mapper.value_to_bin(value);
                 binned_features[[sample_idx, feature_idx]] = bin;
             }
         }
-        
+
         Ok(binned_features)
     }
-    
+
     /// Fit and transform in one step
     pub fn fit_transform(
         &mut self,
@@ -249,46 +256,52 @@ impl FeatureBinner {
         self.fit(features, feature_types)?;
         self.transform(features)
     }
-    
+
     /// Get bin mappers
     pub fn bin_mappers(&self) -> &[BinMapper] {
         &self.bin_mappers
     }
-    
+
     /// Get bin mapper for specific feature
     pub fn bin_mapper(&self, feature_idx: usize) -> Option<&BinMapper> {
         self.bin_mappers.get(feature_idx)
     }
-    
+
     /// Get feature types
     pub fn feature_types(&self) -> &[FeatureType] {
         &self.feature_types
     }
-    
+
     /// Get missing types
     pub fn missing_types(&self) -> &[MissingType] {
         &self.missing_types
     }
-    
+
     /// Get binning statistics
     pub fn statistics(&self) -> BinningStatistics {
         let num_features = self.bin_mappers.len();
-        let num_numerical = self.feature_types.iter()
+        let num_numerical = self
+            .feature_types
+            .iter()
             .filter(|&&ft| ft == FeatureType::Numerical)
             .count();
         let num_categorical = num_features - num_numerical;
-        
+
         let avg_bins_per_feature = if num_features > 0 {
-            self.bin_mappers.iter()
+            self.bin_mappers
+                .iter()
                 .map(|bm| bm.num_bins())
-                .sum::<usize>() as f64 / num_features as f64
+                .sum::<usize>() as f64
+                / num_features as f64
         } else {
             0.0
         };
-        
+
         let memory_usage = self.calculate_memory_usage();
-        
-        let feature_stats = self.bin_mappers.iter()
+
+        let feature_stats = self
+            .bin_mappers
+            .iter()
             .enumerate()
             .map(|(idx, bm)| FeatureBinningStats {
                 feature_index: idx,
@@ -299,7 +312,7 @@ impl FeatureBinner {
                 bin_distribution: vec![], // TODO: Track bin distributions
             })
             .collect();
-        
+
         BinningStatistics {
             num_features,
             num_numerical,
@@ -310,54 +323,55 @@ impl FeatureBinner {
             feature_stats,
         }
     }
-    
+
     /// Validate binning configuration
+    // TODO: implement comprehensive configuration validation logic
     fn validate_config(&self) -> Result<()> {
         self.config.validate()
     }
-    
+
     /// Auto-detect feature types
     fn auto_detect_feature_types(&self, features: &Array2<f32>) -> Vec<FeatureType> {
         let mut types = Vec::new();
-        
+
         for col_idx in 0..features.ncols() {
             let column = features.column(col_idx);
-            let unique_values: std::collections::HashSet<_> = column.iter()
+            let unique_values: std::collections::HashSet<_> = column
+                .iter()
                 .filter(|&&x| !x.is_nan())
                 .map(|&x| x as i32)
                 .collect();
-            
+
             // Heuristic: if all values are integers and there are very few unique values,
             // treat as categorical
-            if unique_values.len() <= 3 && 
-               column.iter().all(|&x| x.is_nan() || x.fract() == 0.0) {
+            if unique_values.len() <= 3 && column.iter().all(|&x| x.is_nan() || x.fract() == 0.0) {
                 types.push(FeatureType::Categorical);
             } else {
                 types.push(FeatureType::Numerical);
             }
         }
-        
+
         types
     }
-    
+
     /// Calculate memory usage
     fn calculate_memory_usage(&self) -> usize {
         let mut usage = 0;
-        
+
         // Bin mappers
         for bin_mapper in &self.bin_mappers {
             usage += bin_mapper.memory_usage();
         }
-        
+
         // Feature types
         usage += self.feature_types.len() * std::mem::size_of::<FeatureType>();
-        
+
         // Missing types
         usage += self.missing_types.len() * std::mem::size_of::<MissingType>();
-        
+
         usage
     }
-    
+
     /// Save binning configuration and mappers
     pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
         let data = BinningData {
@@ -366,24 +380,26 @@ impl FeatureBinner {
             feature_types: self.feature_types.clone(),
             missing_types: self.missing_types.clone(),
         };
-        
-        let serialized = bincode::serialize(&data)
-            .map_err(|e| LightGBMError::config(format!("Failed to serialize binning data: {}", e)))?;
-        
+
+        let serialized = bincode::serialize(&data).map_err(|e| {
+            LightGBMError::config(format!("Failed to serialize binning data: {}", e))
+        })?;
+
         std::fs::write(path, serialized)
             .map_err(|e| LightGBMError::config(format!("Failed to write binning file: {}", e)))?;
-        
+
         Ok(())
     }
-    
+
     /// Load binning configuration and mappers
     pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let data = std::fs::read(path)
             .map_err(|e| LightGBMError::config(format!("Failed to read binning file: {}", e)))?;
-        
-        let binning_data: BinningData = bincode::deserialize(&data)
-            .map_err(|e| LightGBMError::config(format!("Failed to deserialize binning data: {}", e)))?;
-        
+
+        let binning_data: BinningData = bincode::deserialize(&data).map_err(|e| {
+            LightGBMError::config(format!("Failed to deserialize binning data: {}", e))
+        })?;
+
         Ok(FeatureBinner {
             config: binning_data.config.clone(),
             max_bins: binning_data.config.max_bins,
@@ -414,7 +430,7 @@ impl BinningConfig {
                 "must be at least 2",
             ));
         }
-        
+
         if self.max_bins > 65535 {
             return Err(LightGBMError::invalid_parameter(
                 "max_bins",
@@ -422,7 +438,7 @@ impl BinningConfig {
                 "cannot exceed 65535",
             ));
         }
-        
+
         if self.min_data_per_bin < 1 {
             return Err(LightGBMError::invalid_parameter(
                 "min_data_per_bin",
@@ -430,13 +446,13 @@ impl BinningConfig {
                 "must be at least 1",
             ));
         }
-        
+
         if self.force_col_wise && self.force_row_wise {
             return Err(LightGBMError::config(
-                "Cannot force both column-wise and row-wise binning"
+                "Cannot force both column-wise and row-wise binning",
             ));
         }
-        
+
         if let Some(memory_limit) = self.memory_limit_mb {
             if memory_limit == 0 {
                 return Err(LightGBMError::invalid_parameter(
@@ -446,7 +462,7 @@ impl BinningConfig {
                 ));
             }
         }
-        
+
         Ok(())
     }
 }
@@ -454,7 +470,7 @@ impl BinningConfig {
 /// Utility functions for binning
 pub mod utils {
     use super::*;
-    
+
     /// Create optimal binning configuration for dataset
     pub fn create_optimal_config(
         num_samples: usize,
@@ -462,7 +478,7 @@ pub mod utils {
         memory_limit_mb: Option<usize>,
     ) -> BinningConfig {
         let mut config = BinningConfig::default();
-        
+
         // Adjust max_bins based on data size
         if num_samples <= 1000 {
             config.max_bins = 32;
@@ -473,23 +489,23 @@ pub mod utils {
         } else {
             config.max_bins = 255;
         }
-        
+
         // Adjust min_data_per_bin based on data size
         config.min_data_per_bin = std::cmp::max(3, num_samples / (config.max_bins * 100));
-        
+
         // Set memory limit
         config.memory_limit_mb = memory_limit_mb;
-        
+
         // Choose strategy based on data characteristics
         if num_features > 1000 {
-            config.strategy = BinningStrategy::Uniform;  // Faster for high-dimensional data
+            config.strategy = BinningStrategy::Uniform; // Faster for high-dimensional data
         } else {
-            config.strategy = BinningStrategy::Quantile;  // Better quality for low-dimensional data
+            config.strategy = BinningStrategy::Quantile; // Better quality for low-dimensional data
         }
-        
+
         config
     }
-    
+
     /// Estimate memory usage for binning
     pub fn estimate_memory_usage(
         num_samples: usize,
@@ -498,16 +514,16 @@ pub mod utils {
     ) -> usize {
         // Binned features array
         let binned_features_size = num_samples * num_features * std::mem::size_of::<BinIndex>();
-        
+
         // Bin mappers (approximate)
         let bin_mappers_size = num_features * max_bins * std::mem::size_of::<f64>();
-        
+
         // Additional overhead
         let overhead = (binned_features_size + bin_mappers_size) / 10;
-        
+
         binned_features_size + bin_mappers_size + overhead
     }
-    
+
     /// Choose optimal binning strategy
     pub fn choose_strategy(
         num_samples: usize,
@@ -533,7 +549,7 @@ pub mod utils {
 mod tests {
     use super::*;
     use ndarray::Array2;
-    
+
     #[test]
     fn test_binning_config_default() {
         let config = BinningConfig::default();
@@ -542,84 +558,80 @@ mod tests {
         assert_eq!(config.strategy, BinningStrategy::Quantile);
         assert_eq!(config.missing_handling, MissingHandling::Zero);
     }
-    
+
     #[test]
     fn test_binning_config_validation() {
         let mut config = BinningConfig::default();
         assert!(config.validate().is_ok());
-        
+
         config.max_bins = 1;
         assert!(config.validate().is_err());
-        
+
         config.max_bins = 128;
         config.min_data_per_bin = 0;
         assert!(config.validate().is_err());
-        
+
         config.min_data_per_bin = 3;
         config.force_col_wise = true;
         config.force_row_wise = true;
         assert!(config.validate().is_err());
     }
-    
+
     #[test]
     fn test_feature_binner_creation() {
         let config = BinningConfig::default();
         let binner = FeatureBinner::new(config).unwrap();
-        
+
         assert_eq!(binner.max_bins, DEFAULT_MAX_BIN);
         assert_eq!(binner.min_data_per_bin, 3);
         assert_eq!(binner.bin_mappers.len(), 0);
     }
-    
+
     #[test]
     fn test_feature_type_detection() {
-        let features = Array2::from_shape_vec((4, 2), vec![
-            1.0, 1.0,
-            2.0, 1.0,
-            3.0, 2.0,
-            4.0, 2.0,
-        ]).unwrap();
-        
+        let features =
+            Array2::from_shape_vec((4, 2), vec![1.0, 1.0, 2.0, 1.0, 3.0, 2.0, 4.0, 2.0]).unwrap();
+
         let config = BinningConfig::default();
         let binner = FeatureBinner::new(config).unwrap();
         let types = binner.auto_detect_feature_types(&features);
-        
+
         assert_eq!(types.len(), 2);
         assert_eq!(types[0], FeatureType::Numerical);
         assert_eq!(types[1], FeatureType::Categorical);
     }
-    
+
     #[test]
     fn test_memory_estimation() {
         let memory = utils::estimate_memory_usage(1000, 10, 128);
         assert!(memory > 0);
-        
+
         let memory_large = utils::estimate_memory_usage(10000, 100, 255);
         assert!(memory_large > memory);
     }
-    
+
     #[test]
     fn test_optimal_config_creation() {
         let config = utils::create_optimal_config(1000, 10, Some(1024));
         assert_eq!(config.max_bins, 32);
         assert_eq!(config.memory_limit_mb, Some(1024));
-        
+
         let config_large = utils::create_optimal_config(100000, 100, None);
         assert_eq!(config_large.max_bins, 255);
         assert!(config_large.memory_limit_mb.is_none());
     }
-    
+
     #[test]
     fn test_strategy_choice() {
         let strategy = utils::choose_strategy(1000, 20, FeatureType::Numerical);
         assert_eq!(strategy, BinningStrategy::Custom);
-        
+
         let strategy = utils::choose_strategy(1000, 200, FeatureType::Numerical);
         assert_eq!(strategy, BinningStrategy::Uniform);
-        
+
         let strategy = utils::choose_strategy(100000, 1000, FeatureType::Numerical);
         assert_eq!(strategy, BinningStrategy::Quantile);
-        
+
         let strategy = utils::choose_strategy(1000, 10, FeatureType::Categorical);
         assert_eq!(strategy, BinningStrategy::Custom);
     }

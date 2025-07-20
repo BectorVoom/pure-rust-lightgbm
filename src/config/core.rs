@@ -19,95 +19,161 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     // Core training parameters
+    /// Objective function type (regression, classification, etc.)
     pub objective: ObjectiveType,
+    /// Number of boosting iterations
     pub num_iterations: usize,
+    /// Learning rate for gradient descent
     pub learning_rate: f64,
+    /// Maximum number of leaves in one tree
     pub num_leaves: usize,
+    /// Maximum depth of tree (-1 for unlimited)
     pub max_depth: i32,
+    /// Boosting algorithm type
     pub boosting_type: BoostingType,
+    /// Tree learner algorithm type
     pub tree_learner: TreeLearnerType,
 
     // Regularization parameters
+    /// L1 regularization term
     pub lambda_l1: f64,
+    /// L2 regularization term
     pub lambda_l2: f64,
+    /// Minimum number of data points in a leaf
     pub min_data_in_leaf: DataSize,
+    /// Minimum sum of hessian values in a leaf
     pub min_sum_hessian_in_leaf: f64,
+    /// Minimum gain required to make a split
     pub min_gain_to_split: f64,
+    /// Maximum delta step for updates
     pub max_delta_step: f64,
 
     // Sampling parameters
+    /// Fraction of features to use for each tree
     pub feature_fraction: f64,
+    /// Fraction of features to use for each node
     pub feature_fraction_bynode: f64,
+    /// Fraction of data to use for bagging
     pub bagging_fraction: f64,
+    /// Frequency of bagging (0 = disabled)
     pub bagging_freq: usize,
+    /// Random seed for bagging
     pub bagging_seed: u64,
 
     // Feature parameters
+    /// Maximum number of bins for feature discretization
     pub max_bin: usize,
+    /// Minimum data per categorical group
     pub min_data_per_group: usize,
+    /// Smoothing parameter for categorical features
     pub cat_smooth: f64,
+    /// L2 regularization for categorical features
     pub cat_l2: f64,
+    /// Maximum categories to use one-hot encoding
     pub max_cat_to_onehot: usize,
+    /// Top-k categories to consider
     pub top_k: usize,
 
     // Device configuration
+    /// Device type (CPU, GPU, etc.)
     pub device_type: DeviceType,
+    /// Number of threads for parallel processing
     pub num_threads: usize,
+    /// GPU platform ID
     pub gpu_platform_id: i32,
+    /// GPU device ID
     pub gpu_device_id: i32,
+    /// Use double precision on GPU
     pub gpu_use_dp: bool,
 
     // Multiclass parameters
+    /// Number of classes for multiclass classification
     pub num_class: usize,
+    /// Whether dataset is unbalanced
     pub is_unbalance: bool,
+    /// Weight for positive class in binary classification
     pub scale_pos_weight: f64,
 
     // Early stopping
+    /// Early stopping rounds (None = disabled)
     pub early_stopping_rounds: Option<usize>,
+    /// Tolerance for early stopping
     pub early_stopping_tolerance: f64,
+    /// Use only first metric for early stopping
     pub first_metric_only: bool,
 
     // Validation and metrics
+    /// Metrics to evaluate during training
     pub metric: Vec<MetricType>,
+    /// Frequency of metric evaluation
     pub metric_freq: usize,
+    /// Whether to compute training metrics
     pub is_training_metric: bool,
 
     // Output control
+    /// Verbosity level for logging
     pub verbosity: VerbosityLevel,
+    /// Output model file path
     pub output_model: Option<String>,
+    /// Input model file path for continuing training
     pub input_model: Option<String>,
+    /// Save model in binary format
     pub save_binary: bool,
 
     // Reproducibility
+    /// Random seed for reproducible results
     pub random_seed: u64,
+    /// Force deterministic behavior
     pub deterministic: bool,
 
     // Advanced parameters
+    /// Force column-wise histogram building
     pub force_col_wise: bool,
+    /// Force row-wise histogram building
     pub force_row_wise: bool,
+    /// Maximum bins for each feature (if None, use max_bin for all)
     pub max_bin_by_feature: Option<Vec<usize>>,
+    /// Monotone constraints for features (-1, 0, 1 for decreasing, none, increasing)
     pub monotone_constraints: Option<Vec<i8>>,
+    /// Method for monotone constraints enforcement
     pub monotone_constraints_method: String,
+    /// Penalty for violating monotone constraints
     pub monotone_penalty: f64,
+    /// Interaction constraints between features
     pub interaction_constraints: Option<Vec<Vec<usize>>>,
+    /// Filename containing forced splits information
     pub forcedsplits_filename: Option<String>,
+    /// Decay rate for refitting leaf values
     pub refit_decay_rate: f64,
+    /// Path smoothing parameter
     pub path_smooth: f64,
 
     // Network parameters (for distributed training)
+    /// Number of machines for distributed training
     pub num_machines: usize,
+    /// Local port for listening in distributed training
     pub local_listen_port: u16,
+    /// Timeout for network operations in seconds
     pub time_out: u64,
+    /// Filename containing machine list for distributed training
     pub machine_list_filename: Option<String>,
 
     // Additional parameters
+    /// Extra random seed for additional randomness
     pub extra_seed: u64,
+    /// Enable extremely randomized trees
     pub extra_trees: bool,
+    /// Probability of skipping dropout
     pub skip_drop: f64,
+    /// Dropout rate for DART boosting
     pub drop_rate: f64,
+    /// Maximum number of dropped trees in DART
     pub max_drop: usize,
+    /// Use uniform dropout in DART
     pub uniform_drop: bool,
+    /// Enable XGBoost-style DART mode
     pub xgboost_dart_mode: bool,
+    /// Random seed for dropout
     pub drop_seed: u64,
 }
 
@@ -893,18 +959,34 @@ impl Default for ConfigBuilder {
 /// Configuration error type
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// Invalid configuration parameter value
     #[error("Invalid parameter: {parameter} = {value}, {reason}")]
     InvalidParameter {
+        /// Name of the invalid parameter
         parameter: String,
+        /// Value that was provided
         value: String,
+        /// Reason why the parameter is invalid
         reason: String,
     },
+    /// Required configuration parameter is missing
     #[error("Missing required parameter: {parameter}")]
-    MissingParameter { parameter: String },
+    MissingParameter { 
+        /// Name of the missing parameter
+        parameter: String 
+    },
+    /// Configuration file processing error
     #[error("Configuration file error: {message}")]
-    FileError { message: String },
+    FileError { 
+        /// Error message describing the file issue
+        message: String 
+    },
+    /// Configuration serialization/deserialization error
     #[error("Serialization error: {message}")]
-    SerializationError { message: String },
+    SerializationError { 
+        /// Error message describing the serialization issue
+        message: String 
+    },
 }
 
 #[cfg(test)]

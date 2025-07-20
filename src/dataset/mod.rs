@@ -189,6 +189,7 @@ impl DatasetConfig {
 }
 
 /// Dataset factory for creating datasets from various sources
+#[derive(Debug)]
 pub struct DatasetFactory;
 
 impl DatasetFactory {

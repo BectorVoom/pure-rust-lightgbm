@@ -455,6 +455,7 @@ impl<T> MemoryPool<T> {
 /// Handle representing a memory allocation
 #[derive(Debug)]
 pub struct MemoryHandle<T> {
+    // TODO: implement memory handle size tracking and usage functionality
     size: usize,
     phantom: std::marker::PhantomData<T>,
 }

@@ -180,10 +180,15 @@ pub trait DecisionTree: Send + Sync + Debug {
 /// Information about a decision tree's structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeInfo {
+    /// Number of leaf nodes in the tree
     pub num_leaves: usize,
+    /// Maximum depth of the tree
     pub depth: usize,
+    /// Total number of nodes (internal + leaf)
     pub num_nodes: usize,
+    /// Number of internal (non-leaf) nodes
     pub num_internal_nodes: usize,
+    /// Map of feature indices to their usage count in the tree
     pub feature_usage: std::collections::HashMap<FeatureIndex, usize>,
 }
 

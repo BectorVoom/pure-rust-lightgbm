@@ -138,15 +138,29 @@ impl LeafIndexPredictor {
     }
 
     /// Predict leaf indices for a single sample
-    pub fn predict_leaf_indices_single(&self, _features: &[f32]) -> Result<Array1<i32>> {
+    pub fn predict_leaf_indices_single(&self, features: &[f32]) -> Result<Array1<i32>> {
         match &self.model {
             Some(model) => {
-                let num_trees = self.estimate_num_trees(model)?;
+                let models = model.models();
+                let num_trees = models.len();
 
-                // TODO: Implement actual leaf index prediction by traversing trees with features
-                // This should use the features parameter to navigate through each tree
-                // Placeholder: return dummy leaf indices
-                let leaf_indices = Array1::zeros(num_trees);
+                // Use the configured number of iterations if specified
+                let effective_num_trees = if let Some(max_iterations) = self.config.num_iterations {
+                    // For each iteration, we might have multiple trees (e.g., multiclass)
+                    // For now, assume 1 tree per iteration for simplicity
+                    let max_trees = max_iterations;
+                    num_trees.min(max_trees)
+                } else {
+                    num_trees
+                };
+
+                let mut leaf_indices = Array1::zeros(effective_num_trees);
+
+                // Traverse each tree to find the leaf index for the given features
+                for (tree_idx, tree) in models.iter().take(effective_num_trees).enumerate() {
+                    let leaf_index = tree.predict_leaf_index(features);
+                    leaf_indices[tree_idx] = leaf_index;
+                }
 
                 Ok(leaf_indices)
             }
@@ -227,13 +241,18 @@ impl LeafIndexPredictor {
     }
 
     /// Estimate number of trees in the model
-    fn estimate_num_trees(&self, _model: &crate::boosting::GBDT) -> Result<usize> {
-        // TODO: Implement actual tree count estimation from model
-        // This would need access to the model's internal structure
-        // For now, use a placeholder calculation
-        let num_iterations = self.config.num_iterations.unwrap_or(100); // Default
-        let num_tree_per_iteration = 1; // Would need to get from model config
-        Ok(num_iterations * num_tree_per_iteration)
+    fn estimate_num_trees(&self, model: &crate::boosting::GBDT) -> Result<usize> {
+        let actual_num_trees = model.models().len();
+        
+        // Use the configured number of iterations if specified
+        if let Some(max_iterations) = self.config.num_iterations {
+            // For each iteration, we might have multiple trees (e.g., multiclass)
+            // For now, assume 1 tree per iteration for simplicity
+            let max_trees = max_iterations;
+            Ok(actual_num_trees.min(max_trees))
+        } else {
+            Ok(actual_num_trees)
+        }
     }
 
     /// Generate tree metadata

@@ -360,6 +360,7 @@ pub trait ObjectiveFunction: Send + Sync {
 }
 
 /// Regression objective function
+#[derive(Debug)]
 pub struct RegressionObjective;
 
 impl ObjectiveFunction for RegressionObjective {
@@ -517,6 +518,7 @@ impl ObjectiveFunction for BinaryObjective {
 }
 
 /// Multiclass classification objective function
+#[derive(Debug)]
 pub struct MulticlassObjective {
     config: ObjectiveConfig,
 }

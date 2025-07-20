@@ -65,6 +65,7 @@ impl std::fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {}
 
 /// Configuration validator
+#[derive(Debug)]
 pub struct ConfigValidator {
     /// Enable strict validation
     strict_mode: bool,
@@ -138,7 +139,7 @@ pub struct InferenceSpeedRequirements {
 }
 
 /// Validation rule trait
-pub trait ValidationRule: Send + Sync {
+pub trait ValidationRule: Send + Sync + std::fmt::Debug {
     /// Rule name
     fn name(&self) -> &'static str;
 
@@ -579,6 +580,7 @@ impl ConfigValidator {
 }
 
 /// Learning rate validation rule
+#[derive(Debug)]
 struct LearningRateRule;
 
 impl ValidationRule for LearningRateRule {
@@ -603,6 +605,7 @@ impl ValidationRule for LearningRateRule {
 }
 
 /// Number of leaves validation rule
+#[derive(Debug)]
 struct NumLeavesRule;
 
 impl ValidationRule for NumLeavesRule {
@@ -627,6 +630,7 @@ impl ValidationRule for NumLeavesRule {
 }
 
 /// Regularization validation rule
+#[derive(Debug)]
 struct RegularizationRule;
 
 impl ValidationRule for RegularizationRule {
@@ -660,6 +664,7 @@ impl ValidationRule for RegularizationRule {
 }
 
 /// Sampling validation rule
+#[derive(Debug)]
 struct SamplingRule;
 
 impl ValidationRule for SamplingRule {
@@ -693,6 +698,7 @@ impl ValidationRule for SamplingRule {
 }
 
 /// Early stopping validation rule
+#[derive(Debug)]
 struct EarlyStoppingRule;
 
 impl ValidationRule for EarlyStoppingRule {
@@ -719,6 +725,7 @@ impl ValidationRule for EarlyStoppingRule {
 }
 
 /// Memory usage validation rule
+#[derive(Debug)]
 struct MemoryUsageRule;
 
 impl ValidationRule for MemoryUsageRule {
@@ -733,6 +740,7 @@ impl ValidationRule for MemoryUsageRule {
 }
 
 /// Performance validation rule
+#[derive(Debug)]
 struct PerformanceRule;
 
 impl ValidationRule for PerformanceRule {

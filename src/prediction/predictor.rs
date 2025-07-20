@@ -90,16 +90,11 @@ pub trait PredictorTrait {
     fn config(&self) -> &PredictionConfig;
 
     /// Make SHAP predictions if configured
-    fn predict_shap(&self, _features: &ArrayView2<'_, f32>) -> Result<Option<ndarray::Array2<f64>>> {
-        if self.config().predict_contrib {
-            // TODO: Implement actual SHAP prediction calculation using tree traversal
-            // This should use the features parameter to compute SHAP values for each sample
-            // Default implementation - should be overridden by concrete implementations
-            Err(LightGBMError::not_implemented("SHAP prediction in default trait implementation"))
-        } else {
-            Ok(None)
-        }
-    }
+    /// 
+    /// Returns SHAP values as a 2D array (samples × features) when predict_contrib is enabled,
+    /// or None when SHAP prediction is disabled. Implementors must provide proper SHAP
+    /// computation using tree traversal and feature contribution analysis.
+    fn predict_shap(&self, features: &ArrayView2<'_, f32>) -> Result<Option<ndarray::Array2<f64>>>;
 }
 
 /// Concrete predictor implementation

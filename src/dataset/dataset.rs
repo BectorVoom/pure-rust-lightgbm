@@ -550,6 +550,7 @@ impl Dataset {
 }
 
 /// Dataset builder for constructing datasets with validation
+#[derive(Debug)]
 pub struct DatasetBuilder {
     features: Option<Array2<f32>>,
     labels: Option<Array1<f32>>,
@@ -647,18 +648,23 @@ impl Default for DatasetBuilder {
     }
 }
 
-// Thread-safe dataset wrapper
+/// Thread-safe dataset wrapper for concurrent access
+///
+/// Provides safe concurrent access to a dataset by wrapping it in an Arc.
+#[derive(Debug)]
 pub struct ThreadSafeDataset {
     dataset: Arc<Dataset>,
 }
 
 impl ThreadSafeDataset {
+    /// Create a new thread-safe dataset wrapper
     pub fn new(dataset: Dataset) -> Self {
         ThreadSafeDataset {
             dataset: Arc::new(dataset),
         }
     }
 
+    /// Get a reference to the underlying dataset
     pub fn dataset(&self) -> &Dataset {
         &self.dataset
     }

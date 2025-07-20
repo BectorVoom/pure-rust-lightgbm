@@ -110,10 +110,7 @@ lightgbm-rust/
 │   │   ├── dataset.rs         # Core Dataset structure
 │   │   ├── loader/            # Data loading utilities
 │   │   │   ├── mod.rs         # Loader module exports
-│   │   │   ├── csv.rs         # CSV file loading
-│   │   │   ├── polars.rs      # Polars DataFrame integration
-│   │   │   ├── arrow.rs       # Apache Arrow support
-│   │   │   └── parquet.rs     # Parquet file support
+│   │   │   ├── loader.rs      # Polars DataFrame integration and load parquet,csv,mmap format file
 │   │   ├── binning/           # Feature binning system
 │   │   │   ├── mod.rs         # Binning module exports
 │   │   │   ├── mapper.rs      # Bin mapping functionality

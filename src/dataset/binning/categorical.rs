@@ -9,6 +9,7 @@ use ndarray::ArrayView1;
 use std::collections::HashMap;
 
 /// Categorical feature binner
+#[derive(Debug)]
 pub struct CategoricalBinner {
     /// Binning configuration
     config: BinningConfig,
@@ -185,8 +186,8 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::Array1;
     use crate::BinType;
+    use ndarray::Array1;
 
     #[test]
     fn test_categorical_binner_creation() {

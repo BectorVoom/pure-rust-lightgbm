@@ -153,6 +153,7 @@ pub struct KNNModel {
 }
 
 /// Missing value imputer
+#[derive(Debug)]
 pub struct MissingValueImputer {
     /// Configuration
     config: MissingValueConfig,
@@ -937,13 +938,13 @@ impl MissingValueImputer {
         dataset: &Dataset,
         fitted_params: &ImputationParameters,
     ) -> Result<Vec<PlSmallStr>> {
-        let default_names: PlSmallStr = (0..dataset.num_features())
-            .map(|i| format!("feature_{}", i))
+        let _default_names: Vec<PlSmallStr> = (0..dataset.num_features())
+            .map(|i| format!("feature_{}", i).into())
             .collect();
-        let original_names = dataset.feature_names();
+        let original_names = dataset.feature_names().unwrap_or(&[]);
 
         // Remove high missing features
-        let mut new_names = Vec::new();
+        let mut new_names: Vec<PlSmallStr> = Vec::new();
         for (idx, name) in original_names.iter().enumerate() {
             if !fitted_params.removed_features.contains(&idx) {
                 new_names.push(name.clone());
@@ -952,7 +953,9 @@ impl MissingValueImputer {
 
         // Add missing indicator names if configured
         if self.config.create_missing_indicators {
-            let indicator_names: Vec<PlSmallStr> = new_names.into_iter().collect();
+            let indicator_names: Vec<PlSmallStr> = new_names.iter()
+                .map(|name| format!("{}_missing", name.as_str()).into())
+                .collect();
             new_names.extend(indicator_names);
         }
 

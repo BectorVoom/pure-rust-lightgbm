@@ -26,8 +26,10 @@ pub use feature_importance::{FeatureImportanceCalculator, ImportanceType};
 #[derive(Debug)]
 pub struct HistogramPool {
     /// Pool configuration
+    // TODO: implement config usage in histogram pool operations
     config: crate::config::Config,
     /// Pool state
+    // TODO: implement proper initialization state management
     initialized: bool,
     /// Available histogram indices
     available_indices: Vec<usize>,
@@ -35,6 +37,8 @@ pub struct HistogramPool {
     next_index: usize,
     /// Maximum number of histograms
     max_histograms: usize,
+    /// Storage for histogram data (indexed by histogram_index)
+    histograms: std::collections::HashMap<usize, Vec<f64>>,
 }
 
 impl HistogramPool {
@@ -47,6 +51,7 @@ impl HistogramPool {
             available_indices: Vec::new(),
             next_index: 0,
             max_histograms,
+            histograms: std::collections::HashMap::new(),
         })
     }
 
@@ -74,7 +79,14 @@ impl HistogramPool {
         // Return the histogram index to the available pool for reuse
         if index < self.next_index && !self.available_indices.contains(&index) {
             self.available_indices.push(index);
+            // Clear the histogram data to free memory
+            self.histograms.remove(&index);
         }
+    }
+
+    /// Get histogram data from pool
+    pub fn get_histogram_data(&self, histogram_index: usize) -> Option<&Vec<f64>> {
+        self.histograms.get(&histogram_index)
     }
 
     /// Construct histogram
@@ -96,13 +108,65 @@ impl HistogramPool {
             ));
         }
 
-        // For now, this is a placeholder that simulates successful histogram construction
-        // In a complete implementation, this would:
-        // 1. Extract feature values for the given data indices
-        // 2. Bin the values according to the dataset's binning scheme
-        // 3. Accumulate gradients and hessians for each bin
-        // 4. Store the histogram data for later use in split finding
+        // Validate feature index
+        if feature_index >= dataset.num_features() {
+            return Err(LightGBMError::invalid_parameter(
+                "feature_index",
+                feature_index.to_string(),
+                "Feature index must be less than num_features",
+            ));
+        }
 
+        // Get the bin mapper for this feature
+        let bin_mapper = dataset.bin_mapper(feature_index).ok_or_else(|| {
+            LightGBMError::invalid_parameter(
+                "feature_index",
+                feature_index.to_string(),
+                "No bin mapper found for feature index",
+            )
+        })?;
+        let num_bins = bin_mapper.num_bins;
+        
+        // Create histogram array: gradient and hessian per bin
+        let histogram_size = num_bins * 2;
+        let mut histogram = vec![0.0; histogram_size];
+        
+        // Get feature matrix to access feature values
+        let features = dataset.features();
+        
+        // Construct histogram by accumulating gradients and hessians for each bin
+        for &data_idx in data_indices {
+            let idx = data_idx as usize;
+            
+            // Validate data index
+            if idx >= dataset.num_data() {
+                continue; // Skip invalid indices
+            }
+            
+            // Get feature value for this data point
+            let feature_value = features[[idx, feature_index]];
+            
+            // Convert feature value to bin index
+            let bin = bin_mapper.value_to_bin(feature_value);
+            let bin_idx = bin as usize;
+            
+            // Validate bin index
+            if bin_idx >= num_bins {
+                continue; // Skip invalid bins
+            }
+            
+            // Get gradient and hessian for this data point
+            let gradient = gradients[idx] as crate::core::types::Hist;
+            let hessian = hessians[idx] as crate::core::types::Hist;
+            
+            // Accumulate into histogram (gradient at even indices, hessian at odd indices)
+            histogram[bin_idx * 2] += gradient;
+            histogram[bin_idx * 2 + 1] += hessian;
+        }
+        
+        // Store the histogram data in the pool for later use in split finding
+        self.histograms.insert(histogram_index, histogram);
+        
         Ok(())
     }
 }
@@ -122,36 +186,153 @@ impl SplitFinder {
         })
     }
 
-    /// Find best split
+    /// Find best split using histogram-based evaluation
     pub fn find_best_split(
         &self,
-        _histogram_index: usize,
-        _histogram_pool: &HistogramPool,
+        histogram_index: usize,
+        histogram_pool: &mut HistogramPool,
+        dataset: &crate::dataset::Dataset,
         feature_index: usize,
         data_indices: &[i32],
-        _gradients: &ArrayView1<'_, Score>,
-        _hessians: &ArrayView1<'_, Score>,
+        gradients: &ArrayView1<'_, Score>,
+        hessians: &ArrayView1<'_, Score>,
     ) -> Result<SplitInfo> {
-        // TODO: Implement actual split finding using histogram data, gradients, and hessians
-        // This should evaluate all possible splits and return the best one based on gain
-        // For now, return a dummy split that simulates finding a reasonable split
-        // In a complete implementation, this would:
-        // 1. Use the histogram to evaluate all possible split points
-        // 2. Calculate gain for each split using gradient and hessian information
-        // 3. Return the split with the highest gain
+        // Validate inputs
+        if data_indices.is_empty() {
+            return Err(LightGBMError::invalid_parameter(
+                "data_indices",
+                "empty".to_string(),
+                "Data indices cannot be empty",
+            ));
+        }
 
-        let split_threshold = 0.5; // Dummy threshold
-        let split_gain = 1.0; // Dummy gain
-        let left_count = data_indices.len() / 2;
-        let right_count = data_indices.len() - left_count;
+        // Calculate total gradient and hessian for this node
+        let mut total_gradient = 0.0;
+        let mut total_hessian = 0.0;
+        
+        for &data_idx in data_indices {
+            let idx = data_idx as usize;
+            if idx < gradients.len() && idx < hessians.len() {
+                total_gradient += gradients[idx] as f64;
+                total_hessian += hessians[idx] as f64;
+            }
+        }
 
-        Ok(SplitInfo {
-            feature: feature_index,
-            threshold: split_threshold,
-            gain: split_gain,
-            left_count,
-            right_count,
-        })
+        // Check minimum hessian constraint
+        let min_sum_hessian = self.config.min_sum_hessian_in_leaf;
+        if total_hessian < min_sum_hessian {
+            return Ok(SplitInfo::new()); // Return invalid split
+        }
+
+        // Use histogram pool for efficient memory management
+        histogram_pool.construct_histogram(
+            histogram_index,
+            dataset,
+            gradients,
+            hessians,
+            data_indices,
+            feature_index,
+        )?;
+
+        // Get bin mapper for this feature to get proper histogram data
+        let bin_mapper = dataset.bin_mapper(feature_index).ok_or_else(|| {
+            LightGBMError::invalid_parameter(
+                "feature_index",
+                feature_index.to_string(),
+                "No bin mapper found for feature index",
+            )
+        })?;
+        let max_bins = bin_mapper.num_bins;
+
+        // Get histogram data from pool
+        let histogram = histogram_pool.get_histogram_data(histogram_index).ok_or_else(|| {
+            LightGBMError::invalid_parameter(
+                "histogram_index",
+                histogram_index.to_string(),
+                "Histogram not found in pool",
+            )
+        })?;
+
+        // Find the best split by evaluating all possible split points
+        let mut best_split = SplitInfo::new();
+        let lambda_l1 = self.config.lambda_l1;
+        let lambda_l2 = self.config.lambda_l2;
+        let min_data_in_leaf = self.config.min_data_in_leaf as usize;
+
+        // Evaluate each possible split point between bins
+        for split_bin in 1..max_bins {
+            let mut left_gradient = 0.0;
+            let mut left_hessian = 0.0;
+            let mut left_count = 0;
+
+            // Calculate left side statistics
+            for bin in 0..split_bin {
+                if bin * 2 + 1 < histogram.len() {
+                    left_gradient += histogram[bin * 2];
+                    left_hessian += histogram[bin * 2 + 1];
+                    // Approximate count based on hessian (assuming hessian ~= count for simple cases)
+                    left_count += histogram[bin * 2 + 1].round() as usize;
+                }
+            }
+
+            // Calculate right side statistics  
+            let right_gradient = total_gradient - left_gradient;
+            let right_hessian = total_hessian - left_hessian;
+            let right_count = data_indices.len() - left_count;
+
+            // Check constraints
+            if left_count < min_data_in_leaf || right_count < min_data_in_leaf {
+                continue;
+            }
+            if left_hessian < min_sum_hessian || right_hessian < min_sum_hessian {
+                continue;
+            }
+
+            // Calculate gain using LightGBM formula with regularization
+            let left_gain = Self::calculate_leaf_gain(left_gradient, left_hessian, lambda_l1, lambda_l2);
+            let right_gain = Self::calculate_leaf_gain(right_gradient, right_hessian, lambda_l1, lambda_l2);
+            let parent_gain = Self::calculate_leaf_gain(total_gradient, total_hessian, lambda_l1, lambda_l2);
+            
+            let split_gain = left_gain + right_gain - parent_gain;
+
+            // Update best split if this is better
+            if split_gain > best_split.gain {
+                best_split = SplitInfo {
+                    feature: feature_index,
+                    threshold: split_bin as f64 / max_bins as f64, // Normalized threshold
+                    gain: split_gain,
+                    left_count,
+                    right_count,
+                };
+            }
+        }
+
+        Ok(best_split)
+    }
+
+    /// Calculate leaf gain with L1/L2 regularization
+    fn calculate_leaf_gain(gradient: f64, hessian: f64, lambda_l1: f64, lambda_l2: f64) -> f64 {
+        if hessian <= 0.0 {
+            return 0.0;
+        }
+        
+        // Apply L1 regularization (soft thresholding)
+        let gradient_abs = gradient.abs();
+        if gradient_abs <= lambda_l1 {
+            return 0.0;
+        }
+        
+        let regularized_gradient = if gradient > 0.0 {
+            gradient - lambda_l1
+        } else {
+            gradient + lambda_l1
+        };
+        
+        // Apply L2 regularization
+        let regularized_hessian = hessian + lambda_l2;
+        
+        // Calculate gain: -0.5 * gradient^2 / hessian (negative because we minimize loss)
+        0.5 * (regularized_gradient * regularized_gradient) / regularized_hessian
     }
 }
 

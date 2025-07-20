@@ -1,4 +1,4 @@
-use lightgbm_rust::dataset::{DatasetConfig, DatasetFactory};
+use lightgbm_rust::dataset::{DatasetConfig, loader::PolarsLoader};
 use lightgbm_rust::core::error::Result;
 use lightgbm_rust::core::types::ImportanceType;
 use lightgbm_rust::{LGBMRegressor, ConfigBuilder};
@@ -25,10 +25,11 @@ fn main() -> Result<()> {
     
     println!("Created test CSV with 3 features and strong linear relationship");
     
-    // Load dataset
+    // Load dataset using PolarsLoader
     let dataset_config = DatasetConfig::new()
         .with_target_column("target");
-    let dataset = DatasetFactory::from_csv(&temp_path, dataset_config)?;
+    let loader = PolarsLoader::new(dataset_config)?;
+    let dataset = loader.load_csv(&temp_path)?;
     
     println!("Dataset loaded: {} samples, {} features", dataset.num_data(), dataset.num_features());
     

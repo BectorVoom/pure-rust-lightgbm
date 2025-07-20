@@ -1,4 +1,4 @@
-use lightgbm_rust::dataset::{DatasetConfig, DatasetFactory};
+use lightgbm_rust::dataset::{DatasetConfig, loader::PolarsLoader};
 use lightgbm_rust::core::error::Result;
 use std::fs;
 
@@ -25,7 +25,8 @@ fn main() -> Result<()> {
     let config = DatasetConfig::new()
         .with_target_column("target");
     
-    let dataset = DatasetFactory::from_csv(&temp_path, config)?;
+    let loader = PolarsLoader::new(config)?;
+    let dataset = loader.load_csv(&temp_path)?;
     
     println!("Dataset loaded successfully!");
     println!("Number of data points: {}", dataset.num_data());

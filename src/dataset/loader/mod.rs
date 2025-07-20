@@ -57,22 +57,26 @@ pub trait DataLoader {
 /// Loader error type
 #[derive(Debug, thiserror::Error)]
 pub enum LoaderError {
+    /// Input/output error during data loading
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("CSV parsing error: {0}")]
-    Csv(String),
+
+    /// Data format parsing error
     #[error("Format error: {0}")]
     Format(String),
+    /// Data dimension mismatch error
     #[error("Dimension mismatch: {0}")]
     DimensionMismatch(String),
 }
 
 /// Array loader for in-memory data
+#[derive(Debug)]
 pub struct ArrayLoader {
     config: LoaderConfig,
 }
 
 impl ArrayLoader {
+    /// Create a new array loader for in-memory data
     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
         Ok(ArrayLoader {
             config: LoaderConfig {
@@ -124,7 +128,7 @@ impl ArrayLoader {
         } else {
             Some(
                 (0..features.ncols())
-                    .map(|i| format!("feature_{}", i))
+                    .map(|i| format!("feature_{}", i).into())
                     .collect(),
             )
         };
@@ -349,11 +353,13 @@ impl DataLoader for ArrayLoader {
 }
 
 /// Binary loader for LightGBM binary format
+#[derive(Debug)]
 pub struct BinaryLoader {
     config: LoaderConfig,
 }
 
 impl BinaryLoader {
+    ///
     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
         Ok(BinaryLoader {
             config: LoaderConfig {
@@ -376,11 +382,13 @@ impl DataLoader for BinaryLoader {
 }
 
 /// Memory-mapped loader for large datasets
+#[derive(Debug)]
 pub struct MemoryMappedLoader {
     config: LoaderConfig,
 }
 
 impl MemoryMappedLoader {
+    /// Create a new memory-mapped loader for large datasets
     pub fn new(dataset_config: DatasetConfig) -> Result<Self> {
         Ok(MemoryMappedLoader {
             config: LoaderConfig {
@@ -392,9 +400,10 @@ impl MemoryMappedLoader {
 }
 
 impl DataLoader for MemoryMappedLoader {
-    fn load<P: AsRef<Path>>(&self, _path: P) -> Result<Dataset> {
-        // TODO: Implement memory-mapped loading according to design document (LightGBMError::NotImplemented remains)
-        Err(LightGBMError::not_implemented("Memory-mapped loading"))
+    fn load<P: AsRef<Path>>(&self, path: P) -> Result<Dataset> {
+        // Use PolarsLoader for memory-mapped IPC loading
+        let polars_loader = PolarsLoader::new(self.config.dataset_config.clone())?;
+        polars_loader.load_ipc(path)
     }
 
     fn config(&self) -> &LoaderConfig {

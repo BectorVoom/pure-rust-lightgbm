@@ -74,7 +74,7 @@ impl FeatureSampler {
     /// Creates a new feature sampler with the given configuration.
     pub fn new(config: FeatureSamplingConfig) -> Self {
         let rng = Xoshiro256PlusPlus::seed_from_u64(config.seed);
-        
+
         FeatureSampler {
             config,
             rng,
@@ -104,8 +104,7 @@ impl FeatureSampler {
 
         // Check if we can use cached samples
         if let Some(cached) = &self.cached_samples {
-            if !self.config.sample_per_node && 
-               self.last_sample_iteration == Some(iteration) {
+            if !self.config.sample_per_node && self.last_sample_iteration == Some(iteration) {
                 return Ok(cached.clone());
             }
         }
@@ -117,10 +116,12 @@ impl FeatureSampler {
         };
 
         let num_to_sample = self.calculate_sample_size(num_features, fraction)?;
-        
+
         let sampled_features = match self.strategy {
             SamplingStrategy::Uniform => self.sample_uniform(num_features, num_to_sample)?,
-            SamplingStrategy::Importance => self.sample_by_importance(num_features, num_to_sample)?,
+            SamplingStrategy::Importance => {
+                self.sample_by_importance(num_features, num_to_sample)?
+            }
             SamplingStrategy::Stratified => self.sample_stratified(num_features, num_to_sample)?,
             SamplingStrategy::Systematic => self.sample_systematic(num_features, num_to_sample)?,
         };
@@ -144,9 +145,9 @@ impl FeatureSampler {
         // Adjust sampling fraction based on node depth for regularization
         let depth_factor = 1.0 - (node_depth as f64 * 0.1).min(0.5);
         let adjusted_fraction = self.config.feature_fraction_bynode * depth_factor;
-        
+
         let num_to_sample = self.calculate_sample_size(num_features, adjusted_fraction)?;
-        
+
         match self.strategy {
             SamplingStrategy::Uniform => self.sample_uniform(num_features, num_to_sample),
             SamplingStrategy::Importance => self.sample_by_importance(num_features, num_to_sample),
@@ -174,12 +175,12 @@ impl FeatureSampler {
             // Deterministic sampling using fixed intervals
             let mut features = Vec::new();
             let step = num_features as f64 / num_to_sample as f64;
-            
+
             for i in 0..num_to_sample {
                 let feature_idx = ((i as f64 * step) as usize).min(num_features - 1);
                 features.push(feature_idx);
             }
-            
+
             Ok(features)
         } else {
             // Random sampling without replacement
@@ -275,14 +276,14 @@ impl FeatureSampler {
         for stratum_idx in 0..num_strata {
             let start_idx = stratum_idx * strata_size;
             let end_idx = ((stratum_idx + 1) * strata_size).min(num_features);
-            
+
             if start_idx >= num_features {
                 break;
             }
 
             let current_stratum_size = end_idx - start_idx;
             let mut samples_from_stratum = samples_per_stratum;
-            
+
             // Distribute extra samples to first strata
             if stratum_idx < extra_samples {
                 samples_from_stratum += 1;
@@ -294,7 +295,7 @@ impl FeatureSampler {
             let mut stratum_features: Vec<FeatureIndex> = (start_idx..end_idx).collect();
             stratum_features.shuffle(&mut self.rng);
             stratum_features.truncate(samples_from_stratum);
-            
+
             features.extend(stratum_features);
         }
 
@@ -322,7 +323,7 @@ impl FeatureSampler {
             let feature_idx = (current_pos as usize).min(num_features - 1);
             features.push(feature_idx);
             current_pos += interval;
-            
+
             if current_pos >= num_features as f64 {
                 break;
             }
@@ -352,18 +353,20 @@ impl FeatureSampler {
     /// Calculates the number of features to sample based on fraction and constraints.
     fn calculate_sample_size(&self, num_features: usize, fraction: f64) -> anyhow::Result<usize> {
         if fraction <= 0.0 || fraction > 1.0 {
-            return Err(anyhow::anyhow!("Feature fraction must be between 0.0 and 1.0"));
+            return Err(anyhow::anyhow!(
+                "Feature fraction must be between 0.0 and 1.0"
+            ));
         }
 
         let mut num_to_sample = (num_features as f64 * fraction).round() as usize;
-        
+
         // Apply constraints
         num_to_sample = num_to_sample.max(self.config.min_features);
-        
+
         if let Some(max_features) = self.config.max_features {
             num_to_sample = num_to_sample.min(max_features);
         }
-        
+
         num_to_sample = num_to_sample.min(num_features);
 
         Ok(num_to_sample)
@@ -380,11 +383,11 @@ impl FeatureSampler {
     pub fn update_config(&mut self, config: FeatureSamplingConfig) {
         let seed_changed = self.config.seed != config.seed;
         self.config = config;
-        
+
         if seed_changed {
             self.rng = Xoshiro256PlusPlus::seed_from_u64(self.config.seed);
         }
-        
+
         // Clear cache when config changes
         self.cached_samples = None;
         self.last_sample_iteration = None;
@@ -424,7 +427,7 @@ impl FeatureSampler {
         // Check for duplicates
         let mut sorted_features = features.to_vec();
         sorted_features.sort_unstable();
-        
+
         for window in sorted_features.windows(2) {
             if window[0] == window[1] {
                 return false; // Duplicate found
@@ -473,7 +476,7 @@ mod tests {
 
         let features1 = sampler.sample_features(10, 0).unwrap();
         let features2 = sampler.sample_features(10, 0).unwrap();
-        
+
         assert_eq!(features1, features2); // Should be identical
     }
 
@@ -531,18 +534,18 @@ mod tests {
         let mut config = FeatureSamplingConfig::default();
         config.min_features = 2;
         config.max_features = Some(8);
-        
+
         let sampler = FeatureSampler::new(config);
 
         // Test normal case
         assert_eq!(sampler.calculate_sample_size(10, 0.5).unwrap(), 5);
-        
+
         // Test minimum constraint
         assert_eq!(sampler.calculate_sample_size(10, 0.1).unwrap(), 2);
-        
+
         // Test maximum constraint
         assert_eq!(sampler.calculate_sample_size(10, 0.9).unwrap(), 8);
-        
+
         // Test edge case
         assert_eq!(sampler.calculate_sample_size(10, 1.0).unwrap(), 8);
     }
@@ -554,13 +557,13 @@ mod tests {
 
         // Valid features
         assert!(sampler.validate_features(&[0, 2, 4, 6], 10));
-        
+
         // Empty features (invalid)
         assert!(!sampler.validate_features(&[], 10));
-        
+
         // Out of range feature (invalid)
         assert!(!sampler.validate_features(&[0, 2, 10], 10));
-        
+
         // Duplicate features (invalid)
         assert!(!sampler.validate_features(&[0, 2, 2, 4], 10));
     }
@@ -577,11 +580,11 @@ mod tests {
 
         let features1 = sampler.sample_features(10, 0).unwrap();
         let features2 = sampler.sample_features(10, 0).unwrap(); // Same iteration
-        
+
         assert_eq!(features1, features2); // Should use cached result
 
         let features3 = sampler.sample_features(10, 1).unwrap(); // Different iteration
-        // features3 might be different due to new sampling
+                                                                 // features3 might be different due to new sampling
     }
 
     #[test]
@@ -620,8 +623,8 @@ mod tests {
         sampler.update_config(new_config);
 
         let features2 = sampler.sample_features(10, 0).unwrap();
-        
+
         assert_eq!(features2.len(), 3); // New fraction applied
-        // Results should be different due to new seed
+                                        // Results should be different due to new seed
     }
 }
