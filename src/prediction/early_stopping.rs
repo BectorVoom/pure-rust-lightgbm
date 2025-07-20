@@ -51,14 +51,7 @@ impl PredictionEarlyStopping {
     }
 
     /// Check if early stopping should trigger
-    pub fn should_stop(
-        &self,
-        current_iteration: usize,
-        _predictions: &ArrayView1<Score>,
-        confidence_history: &[f64],
-    ) -> bool {
-        // TODO: Implement predictions-based early stopping decision
-        // This should use predictions to evaluate convergence criteria
+    pub fn should_stop(&self, current_iteration: usize, confidence_history: &[f64]) -> bool {
         if !self.enabled || current_iteration < self.min_iterations {
             return false;
         }
@@ -68,15 +61,47 @@ impl PredictionEarlyStopping {
             return false;
         }
 
-        // Check if last 'patience' iterations all had high confidence
-        let recent_confidence = &confidence_history[confidence_history.len() - self.patience..];
-        recent_confidence
+        // Implement predictions-based early stopping decision using convergence criteria
+        let recent_window = self.patience;
+        let total_len = confidence_history.len();
+        
+        if total_len < recent_window * 2 {
+            // Not enough history for convergence analysis
+            return false;
+        }
+
+        // Calculate prediction stability using confidence variance
+        let recent_confidence = &confidence_history[total_len - recent_window..];
+        let previous_confidence = &confidence_history[total_len - recent_window * 2..total_len - recent_window];
+        
+        // Calculate average confidence for both windows
+        let recent_avg = recent_confidence.iter().sum::<f64>() / recent_confidence.len() as f64;
+        let previous_avg = previous_confidence.iter().sum::<f64>() / previous_confidence.len() as f64;
+        
+        // Calculate confidence variance for stability assessment
+        let recent_variance = recent_confidence
             .iter()
-            .all(|&conf| conf >= self.confidence_threshold)
+            .map(|&x| (x - recent_avg).powi(2))
+            .sum::<f64>() / recent_confidence.len() as f64;
+        
+        // Convergence criteria:
+        // 1. Recent confidence is above threshold
+        // 2. Confidence improvement has plateaued (relative change < 1%)
+        // 3. Predictions are stable (low variance)
+        let confidence_above_threshold = recent_avg >= self.confidence_threshold;
+        let relative_improvement = if previous_avg.abs() > 1e-8 {
+            (recent_avg - previous_avg).abs() / previous_avg.abs()
+        } else {
+            (recent_avg - previous_avg).abs()
+        };
+        let improvement_plateaued = relative_improvement < 0.01; // Less than 1% change
+        let predictions_stable = recent_variance < 0.001; // Low variance indicates stability
+        
+        confidence_above_threshold && improvement_plateaued && predictions_stable
     }
 
     /// Calculate confidence score from predictions
-    pub fn calculate_confidence(&self, predictions: &ArrayView1<Score>) -> f64 {
+    pub fn calculate_confidence(&self, predictions: &ArrayView1<'_, Score>) -> f64 {
         if predictions.is_empty() {
             return 0.0;
         }
@@ -127,7 +152,7 @@ impl EarlyStoppingTracker {
     }
 
     /// Update tracker with new predictions
-    pub fn update(&mut self, predictions: &ArrayView1<Score>) -> bool {
+    pub fn update(&mut self, predictions: &ArrayView1<'_, Score>) -> bool {
         self.current_iteration += 1;
 
         let confidence = self.config.calculate_confidence(predictions);
@@ -140,7 +165,6 @@ impl EarlyStoppingTracker {
 
         self.config.should_stop(
             self.current_iteration,
-            predictions,
             &self.confidence_history,
         )
     }
