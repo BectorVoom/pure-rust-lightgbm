@@ -319,6 +319,7 @@ impl SimpleTree {
         // If this is a leaf node, distribute the contribution
         if node.feature_index < 0 {
             let leaf_contribution = node.leaf_value - base_value - path_contribution;
+            // TODO: Implement SHAP value attribution - leaf_contribution calculated but not used for feature importance
             // For leaves, we don't attribute to any specific feature
             // The leaf contribution represents the base adjustment
             return;
@@ -677,12 +678,19 @@ impl FeatureImportanceStats {
 /// Summary statistics for feature importance values
 #[derive(Debug, Clone)]
 pub struct ImportanceSummary {
+    /// Minimum importance value
     pub min: f64,
+    /// Maximum importance value
     pub max: f64,
+    /// Mean importance value
     pub mean: f64,
+    /// Median importance value
     pub median: f64,
+    /// Standard deviation of importance values
     pub std_dev: f64,
+    /// Number of features with non-zero importance
     pub non_zero_count: usize,
+    /// Total number of features
     pub total_count: usize,
 }
 
@@ -791,12 +799,19 @@ impl SHAPExplanation {
 /// Summary statistics for SHAP values
 #[derive(Debug, Clone)]
 pub struct SHAPSummaryStats {
+    /// Minimum SHAP value
     pub min: f64,
+    /// Maximum SHAP value
     pub max: f64,
+    /// Mean SHAP value
     pub mean: f64,
+    /// Median SHAP value
     pub median: f64,
+    /// Standard deviation of SHAP values
     pub std_dev: f64,
+    /// Sum of absolute SHAP contributions
     pub total_absolute_contribution: f64,
+    /// SHAP additivity error (difference from expected sum)
     pub additivity_error: f64,
 }
 
@@ -935,7 +950,7 @@ impl GBDT {
         log::info!("Starting GBDT training with {} iterations", self.config.num_iterations);
 
         // Get dataset info first
-        let (num_data, num_features, base_prediction) = {
+        let (num_data, num_features, base_prediction) = { // TODO: Implement data loading functionality - num_data and num_features currently unused
             let train_data = self.train_data.as_ref()
                 .ok_or_else(|| LightGBMError::training("No training data available"))?;
 
@@ -957,7 +972,7 @@ impl GBDT {
         }
 
         // Initialize validation scores if validation data is provided
-        if let Some(ref valid_data) = self.valid_data {
+        if let Some(ref valid_data) = self.valid_data { // TODO: Implement validation logic - valid_data currently unused for evaluation
             if let Some(ref mut valid_scores) = self.valid_scores {
                 valid_scores.fill(base_prediction);
             }
@@ -965,13 +980,37 @@ impl GBDT {
 
         // Training loop
         for iteration in 0..self.config.num_iterations {
-            log::debug!("Training iteration {}/{}", iteration + 1, self.config.num_iterations);
+            log::info!("Training iteration {}/{}", iteration + 1, self.config.num_iterations);
 
             // Compute gradients and hessians
             self.compute_gradients()?;
 
+            // Debug: Check gradients/hessians after computation
+            if let (Some(ref gradients), Some(ref hessians)) = (&self.gradients, &self.hessians) {
+                let g_sum: f64 = gradients.iter().map(|&g| g as f64).sum();
+                let h_sum: f64 = hessians.iter().map(|&h| h as f64).sum();
+                let g_mean = g_sum / gradients.len() as f64;
+                let h_mean = h_sum / hessians.len() as f64;
+                log::debug!("After compute_gradients: sum_g={:.6}, sum_h={:.6}, mean_g={:.6}, mean_h={:.6}", 
+                           g_sum, h_sum, g_mean, h_mean);
+                
+                // Check current predictions 
+                if let Some(ref scores) = self.train_scores {
+                    let scores_sample: Vec<f32> = scores.iter().take(5).cloned().collect();
+                    log::debug!("Current predictions sample: {:?}", scores_sample);
+                }
+            }
+
             // Train a tree on gradients/hessians
             let tree = self.train_tree()?;
+            
+            // Debug: Check tree structure
+            log::debug!("Trained tree: {} nodes, {} leaves", tree.nodes.len(), tree.num_leaves);
+            if !tree.nodes.is_empty() {
+                let root = &tree.nodes[0];
+                log::debug!("Root node: feature={}, threshold={:.6}, leaf_value={:.6}", 
+                           root.feature_index, root.threshold, root.leaf_value);
+            }
 
             // Update training scores
             self.update_scores(&tree)?;
@@ -2113,6 +2152,19 @@ impl<'a> TreeBuilder<'a> {
 
         let features = self.train_data.features();
         let num_features = self.train_data.num_features();
+        
+        // Debug: Check gradients and hessians
+        let total_gradient: f64 = sample_indices.iter().map(|&idx| self.gradients[idx] as f64).sum();
+        let total_hessian: f64 = sample_indices.iter().map(|&idx| self.hessians[idx] as f64).sum();
+        log::debug!("find_best_split: {} samples, total_gradient={:.6}, total_hessian={:.6}", 
+                   sample_indices.len(), total_gradient, total_hessian);
+        
+        // Debug: Sample a few gradient/hessian values
+        for i in 0..std::cmp::min(5, sample_indices.len()) {
+            let idx = sample_indices[i];
+            log::debug!("  sample[{}]: gradient={:.6}, hessian={:.6}", 
+                       idx, self.gradients[idx], self.hessians[idx]);
+        }
 
         // Iterate through features to find best split
         for feature_idx in 0..num_features {
@@ -2132,6 +2184,20 @@ impl<'a> TreeBuilder<'a> {
 
             // Sort by feature value
             feature_values.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            
+            // Debug: Check feature value distribution
+            if feature_values.len() > 0 {
+                let min_val = feature_values[0].0;
+                let max_val = feature_values[feature_values.len() - 1].0;
+                log::debug!("  feature[{}]: min={:.6}, max={:.6}, samples={}", 
+                           feature_idx, min_val, max_val, feature_values.len());
+                
+                // Check if feature has variation
+                if (max_val - min_val).abs() < 1e-8 {
+                    log::debug!("  feature[{}]: No variation, skipping", feature_idx);
+                    continue;
+                }
+            }
 
             // Try different split points
             let min_leaf_size = self.config.min_data_in_leaf as usize;
@@ -2150,6 +2216,12 @@ impl<'a> TreeBuilder<'a> {
                 // Calculate gain
                 let gain = self.calculate_split_gain(&left_indices, &right_indices, sample_indices)?;
 
+                // Debug: Log gain calculation for first few splits
+                if feature_idx < 2 && i < min_leaf_size + 5 {
+                    log::debug!("    split feature[{}] threshold={:.6}: left={}, right={}, gain={:.6}", 
+                               feature_idx, threshold, left_indices.len(), right_indices.len(), gain);
+                }
+
                 if gain > best_gain {
                     best_gain = gain;
                     best_split = Some(BestSplit {
@@ -2159,15 +2231,22 @@ impl<'a> TreeBuilder<'a> {
                         left_indices,
                         right_indices,
                     });
+                    log::debug!("    new best split: feature[{}] threshold={:.6} gain={:.6}", 
+                               feature_idx, threshold, gain);
                 }
             }
         }
 
         // Only return split if gain is significant
         let min_split_gain = self.config.min_gain_to_split as f64;
+        log::debug!("find_best_split result: best_gain={:.6}, min_split_gain={:.6}, has_split={}", 
+                   best_gain, min_split_gain, best_gain > min_split_gain);
+        
         if best_gain > min_split_gain {
+            log::debug!("Accepting split with gain={:.6}", best_gain);
             Ok(best_split)
         } else {
+            log::debug!("Rejecting split - gain too low: {:.6} <= {:.6}", best_gain, min_split_gain);
             Ok(None)
         }
     }
@@ -2192,12 +2271,29 @@ impl<'a> TreeBuilder<'a> {
         let lambda = self.config.lambda_l2 as f64;
         let gamma = self.config.min_gain_to_split as f64;  // Minimum split gain threshold
 
+        // Debug: Check if we have the expected gradient/hessian sums
+        let expected_g_sum = g_left + g_right;
+        let expected_h_sum = h_left + h_right;
+        if (g_parent - expected_g_sum).abs() > 1e-6 || (h_parent - expected_h_sum).abs() > 1e-6 {
+            log::warn!("Gradient/Hessian sum mismatch: parent_g={:.6} vs left+right={:.6}, parent_h={:.6} vs left+right={:.6}",
+                      g_parent, expected_g_sum, h_parent, expected_h_sum);
+        }
+
         // LightGBM split gain formula
-        let gain = 0.5 * (
-            (g_left * g_left) / (h_left + lambda) +
-            (g_right * g_right) / (h_right + lambda) -
-            (g_parent * g_parent) / (h_parent + lambda)
-        ) - gamma;
+        let left_score = (g_left * g_left) / (h_left + lambda);
+        let right_score = (g_right * g_right) / (h_right + lambda);
+        let parent_score = (g_parent * g_parent) / (h_parent + lambda);
+        
+        let gain_before_gamma = 0.5 * (left_score + right_score - parent_score);
+        let gain = gain_before_gamma - gamma;
+
+        // Debug: Log detailed gain calculation
+        if parent_indices.len() <= 100 { // Only for small nodes to avoid spam
+            log::debug!("      gain calc: g_L={:.3}, h_L={:.3}, g_R={:.3}, h_R={:.3}, g_P={:.3}, h_P={:.3}",
+                       g_left, h_left, g_right, h_right, g_parent, h_parent);
+            log::debug!("      scores: left={:.6}, right={:.6}, parent={:.6}, gain_raw={:.6}, gamma={:.6}, final_gain={:.6}",
+                       left_score, right_score, parent_score, gain_before_gamma, gamma, gain);
+        }
 
         Ok(gain.max(0.0))  // Ensure non-negative gain
     }
@@ -2230,9 +2326,22 @@ impl<'a> TreeBuilder<'a> {
     /// Convert TreeNode to SimpleTree
     fn to_simple_tree(&mut self, root: TreeNode) -> SimpleTree {
         self.nodes.clear();
+        
+        // Debug: Log the structure of the TreeNode before conversion
+        log::debug!("Converting TreeNode to SimpleTree - root: feature={}, threshold={:.6}, has_children={}", 
+                   root.feature_index, root.threshold, root.left_child.is_some() && root.right_child.is_some());
+        
         self.convert_node(&root);
 
         let num_leaves = self.nodes.iter().filter(|node| node.feature_index < 0).count();
+        
+        // Debug: Log the final SimpleTree structure
+        log::debug!("SimpleTree created: {} total nodes, {} leaves", self.nodes.len(), num_leaves);
+        if !self.nodes.is_empty() {
+            let root_node = &self.nodes[0];
+            log::debug!("SimpleTree root: feature={}, threshold={:.6}, left={}, right={}", 
+                       root_node.feature_index, root_node.threshold, root_node.left_child, root_node.right_child);
+        }
 
         SimpleTree {
             nodes: self.nodes.clone(),
@@ -2244,6 +2353,24 @@ impl<'a> TreeBuilder<'a> {
     fn convert_node(&mut self, node: &TreeNode) -> i32 {
         let node_idx = self.nodes.len() as i32;
 
+        log::debug!("Converting node {}: feature={}, has_children={}", 
+                   node_idx, node.feature_index, 
+                   node.left_child.is_some() && node.right_child.is_some());
+
+        // IMPORTANT: Add the current node FIRST to reserve its index position
+        self.nodes.push(SimpleTreeNode {
+            feature_index: node.feature_index,
+            threshold: node.threshold,
+            left_child: -1,  // Will be updated below
+            right_child: -1, // Will be updated below
+            leaf_value: node.leaf_value,
+            sample_count: node.sample_count,
+            split_gain: node.split_gain.unwrap_or(0.0),
+            node_weight: node.node_weight,
+            coverage: node.coverage,
+        });
+
+        // Now process children and update the indices
         let (left_child, right_child) = if let (Some(ref left), Some(ref right)) = (&node.left_child, &node.right_child) {
             let left_idx = self.convert_node(left);
             let right_idx = self.convert_node(right);
@@ -2252,17 +2379,11 @@ impl<'a> TreeBuilder<'a> {
             (-1, -1)
         };
 
-        self.nodes.push(SimpleTreeNode {
-            feature_index: node.feature_index,
-            threshold: node.threshold,
-            left_child,
-            right_child,
-            leaf_value: node.leaf_value,
-            sample_count: node.sample_count,
-            split_gain: node.split_gain.unwrap_or(0.0),
-            node_weight: node.node_weight,
-            coverage: node.coverage,
-        });
+        // Update the node's child indices
+        self.nodes[node_idx as usize].left_child = left_child;
+        self.nodes[node_idx as usize].right_child = right_child;
+
+        log::debug!("Node {}: setting children left={}, right={}", node_idx, left_child, right_child);
 
         node_idx
     }

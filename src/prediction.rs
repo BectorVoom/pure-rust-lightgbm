@@ -3,10 +3,10 @@
 //! This module provides prediction configuration, predictor implementations,
 //! and prediction pipeline functionality.
 
+use crate::core::error::{LightGBMError, Result};
 use crate::core::types::*;
-use crate::core::error::{Result, LightGBMError};
-use serde::{Deserialize, Serialize};
 use ndarray::{Array1, ArrayView2};
+use serde::{Deserialize, Serialize};
 
 /// Configuration for prediction settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub struct PredictionConfig {
     /// Whether to predict leaf indices
     pub predict_leaf_index: bool,
     /// Whether to predict feature contributions (SHAP values)
-    pub predict_contrib: bool,
+    pub predict_contrib: bool, // TODO: Implement SHAP prediction functionality - configuration exists but no implementation
     /// Early stopping rounds for prediction
     pub early_stopping_rounds: Option<usize>,
     /// Early stopping margin
@@ -98,12 +98,12 @@ pub struct Predictor {
 
 impl Predictor {
     /// Create a new predictor with the given model and configuration
-    pub fn new<T>(_model: T, config: PredictionConfig) -> Result<Self> {
+    pub fn new<T>(model: T, config: PredictionConfig) -> Result<Self> {
         Ok(Predictor { config })
     }
 
     /// Make predictions on features
-    pub fn predict(&self, _features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
+    pub fn predict(&self, features: &ArrayView2<'_, f32>) -> Result<Array1<Score>> {
         // Placeholder implementation - return zeros for now
         Ok(Array1::zeros(1))
     }
@@ -158,7 +158,7 @@ impl HistogramPool {
         if let Some(index) = self.available_indices.pop() {
             return Ok(index);
         }
-        
+
         // Allocate a new histogram if under the limit
         if self.next_index < self.max_histograms {
             let index = self.next_index;
@@ -166,7 +166,7 @@ impl HistogramPool {
             Ok(index)
         } else {
             Err(LightGBMError::memory(
-                "Histogram pool exhausted - no more histograms available"
+                "Histogram pool exhausted - no more histograms available",
             ))
         }
     }
@@ -183,28 +183,28 @@ impl HistogramPool {
     pub fn construct_histogram(
         &mut self,
         histogram_index: usize,
-        _dataset: &crate::dataset::Dataset,
-        _gradients: &ndarray::ArrayView1<'_, Score>,
-        _hessians: &ndarray::ArrayView1<'_, Score>,
-        _data_indices: &[i32],
-        _feature_index: usize,
+        dataset: &crate::dataset::Dataset,
+        gradients: &ndarray::ArrayView1<'_, Score>,
+        hessians: &ndarray::ArrayView1<'_, Score>,
+        data_indices: &[i32],
+        feature_index: usize,
     ) -> Result<()> {
         // Validate histogram index
         if histogram_index >= self.next_index {
             return Err(LightGBMError::invalid_parameter(
                 "histogram_index",
                 histogram_index.to_string(),
-                "Histogram index must be less than next_index"
+                "Histogram index must be less than next_index",
             ));
         }
-        
+
         // For now, this is a placeholder that simulates successful histogram construction
         // In a complete implementation, this would:
         // 1. Extract feature values for the given data indices
         // 2. Bin the values according to the dataset's binning scheme
         // 3. Accumulate gradients and hessians for each bin
         // 4. Store the histogram data for later use in split finding
-        
+
         Ok(())
     }
 }
@@ -227,24 +227,25 @@ impl SplitFinder {
     /// Find best split
     pub fn find_best_split(
         &self,
-        _histogram_index: usize,
-        _histogram_pool: &HistogramPool,
+        histogram_index: usize,
+
+        histogram_pool: &HistogramPool,
         feature_index: usize,
         data_indices: &[i32],
-        _gradients: &ndarray::ArrayView1<'_, Score>,
-        _hessians: &ndarray::ArrayView1<'_, Score>,
+        gradients: &ndarray::ArrayView1<'_, Score>,
+        hessians: &ndarray::ArrayView1<'_, Score>,
     ) -> Result<SplitInfo> {
         // For now, return a dummy split that simulates finding a reasonable split
         // In a complete implementation, this would:
         // 1. Use the histogram to evaluate all possible split points
         // 2. Calculate gain for each split using gradient and hessian information
         // 3. Return the split with the highest gain
-        
+
         let split_threshold = 0.5; // Dummy threshold
         let split_gain = 1.0; // Dummy gain
         let left_count = data_indices.len() / 2;
         let right_count = data_indices.len() - left_count;
-        
+
         Ok(SplitInfo {
             feature: feature_index,
             threshold: split_threshold,

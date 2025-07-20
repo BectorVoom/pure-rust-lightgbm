@@ -158,7 +158,7 @@ pub fn evaluate_binary_classification(
 /// Evaluate multiclass classification metrics
 pub fn evaluate_multiclass_classification(
     class_predictions: &ArrayView1<'_, f32>,
-    prob_predictions: &ArrayView2<'_, f32>,
+    prob_predictions: &ArrayView2<'_, f32>, // TODO: Implement probability-based metrics (log-loss, AUC) - prob_predictions parameter currently unused
     true_labels: &ArrayView1<'_, f32>,
     num_classes: usize,
 ) -> MulticlassMetrics {
