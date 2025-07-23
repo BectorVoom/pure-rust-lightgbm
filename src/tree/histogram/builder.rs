@@ -9,6 +9,151 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rayon::prelude::*;
 use std::sync::Mutex;
 
+/// Feature histogram with interleaved gradient/hessian storage as per C LightGBM implementation.
+/// Storage format: [grad_bin0, hess_bin0, grad_bin1, hess_bin1, ...]
+#[derive(Debug, Clone)]
+pub struct FeatureHistogram {
+    /// Interleaved gradient/hessian data
+    data: Vec<Hist>,
+    /// Number of bins
+    num_bins: usize,
+    /// Feature index this histogram belongs to
+    feature_index: FeatureIndex,
+}
+
+impl FeatureHistogram {
+    /// Creates a new feature histogram with the specified number of bins.
+    pub fn new(feature_index: FeatureIndex, num_bins: usize) -> Self {
+        FeatureHistogram {
+            data: vec![0.0; num_bins * 2], // gradient + hessian per bin
+            num_bins,
+            feature_index,
+        }
+    }
+
+    /// Creates a feature histogram from existing data.
+    pub fn from_data(feature_index: FeatureIndex, data: Vec<Hist>) -> Self {
+        let num_bins = data.len() / 2;
+        FeatureHistogram {
+            data,
+            num_bins,
+            feature_index,
+        }
+    }
+
+    /// Gets the gradient value for a specific bin.
+    #[inline]
+    pub fn get_gradient(&self, bin: usize) -> Hist {
+        debug_assert!(bin < self.num_bins);
+        self.data[bin << 1] // Equivalent to data[bin * 2]
+    }
+
+    /// Gets the hessian value for a specific bin.
+    #[inline]
+    pub fn get_hessian(&self, bin: usize) -> Hist {
+        debug_assert!(bin < self.num_bins);
+        self.data[(bin << 1) + 1] // Equivalent to data[bin * 2 + 1]
+    }
+
+    /// Sets the gradient value for a specific bin.
+    #[inline]
+    pub fn set_gradient(&mut self, bin: usize, gradient: Hist) {
+        debug_assert!(bin < self.num_bins);
+        self.data[bin << 1] = gradient;
+    }
+
+    /// Sets the hessian value for a specific bin.
+    #[inline]
+    pub fn set_hessian(&mut self, bin: usize, hessian: Hist) {
+        debug_assert!(bin < self.num_bins);
+        self.data[(bin << 1) + 1] = hessian;
+    }
+
+    /// Adds a sample to the histogram.
+    #[inline]
+    pub fn add_sample(&mut self, bin: usize, gradient: Hist, hessian: Hist) {
+        debug_assert!(bin < self.num_bins);
+        let base_idx = bin << 1;
+        self.data[base_idx] += gradient;
+        self.data[base_idx + 1] += hessian;
+    }
+
+    /// Returns the number of bins.
+    pub fn num_bins(&self) -> usize {
+        self.num_bins
+    }
+
+    /// Returns the feature index.
+    pub fn feature_index(&self) -> FeatureIndex {
+        self.feature_index
+    }
+
+    /// Returns a reference to the raw interleaved data.
+    pub fn data(&self) -> &[Hist] {
+        &self.data
+    }
+
+    /// Returns a mutable reference to the raw interleaved data.
+    pub fn data_mut(&mut self) -> &mut [Hist] {
+        &mut self.data
+    }
+
+    /// Converts to Array1 for compatibility with existing code.
+    pub fn to_array(&self) -> Array1<Hist> {
+        Array1::from_vec(self.data.clone())
+    }
+
+    /// Clears all histogram data (sets to zero).
+    pub fn clear(&mut self) {
+        self.data.fill(0.0);
+    }
+
+    /// Performs histogram subtraction: self = parent - sibling.
+    pub fn subtract_from(&mut self, parent: &FeatureHistogram, sibling: &FeatureHistogram) {
+        debug_assert_eq!(self.num_bins, parent.num_bins);
+        debug_assert_eq!(self.num_bins, sibling.num_bins);
+        
+        for i in 0..self.data.len() {
+            self.data[i] = parent.data[i] - sibling.data[i];
+        }
+    }
+
+    /// Calculates total gradient sum across all bins.
+    pub fn total_gradient(&self) -> Hist {
+        (0..self.num_bins).map(|bin| self.get_gradient(bin)).sum()
+    }
+
+    /// Calculates total hessian sum across all bins.
+    pub fn total_hessian(&self) -> Hist {
+        (0..self.num_bins).map(|bin| self.get_hessian(bin)).sum()
+    }
+
+    /// Returns statistics about the histogram.
+    pub fn statistics(&self) -> HistogramStatistics {
+        let total_gradient = self.total_gradient();
+        let total_hessian = self.total_hessian();
+        let non_zero_bins = (0..self.num_bins)
+            .filter(|&bin| self.get_gradient(bin) != 0.0 || self.get_hessian(bin) != 0.0)
+            .count();
+
+        HistogramStatistics {
+            total_gradient,
+            total_hessian,
+            non_zero_bins,
+            num_bins: self.num_bins,
+        }
+    }
+}
+
+/// Statistics about a histogram.
+#[derive(Debug, Clone)]
+pub struct HistogramStatistics {
+    pub total_gradient: Hist,
+    pub total_hessian: Hist,
+    pub non_zero_bins: usize,
+    pub num_bins: usize,
+}
+
 /// Configuration for histogram construction.
 #[derive(Debug, Clone)]
 pub struct HistogramBuilderConfig {
@@ -110,6 +255,91 @@ impl HistogramBuilder {
         }
 
         Ok(histogram)
+    }
+
+    /// Constructs a FeatureHistogram for a single feature with optimized interleaved storage.
+    pub fn construct_feature_histogram_optimized(
+        &self,
+        feature_values: &ArrayView1<f32>,
+        gradients: &ArrayView1<Score>,
+        hessians: &ArrayView1<Score>,
+        data_indices: &[DataSize],
+        bin_mapper: &BinMapper,
+        feature_index: FeatureIndex,
+    ) -> anyhow::Result<FeatureHistogram> {
+        let num_bins = bin_mapper.num_bins();
+        let mut histogram = FeatureHistogram::new(feature_index, num_bins);
+
+        // Use optimized scalar accumulation with interleaved storage
+        for &data_idx in data_indices {
+            let idx = data_idx as usize;
+            if idx >= feature_values.len() {
+                continue;
+            }
+
+            let feature_value = feature_values[idx];
+            let bin = bin_mapper.value_to_bin(feature_value) as usize;
+            
+            if bin < num_bins {
+                let gradient = gradients[idx] as Hist;
+                let hessian = hessians[idx] as Hist;
+                histogram.add_sample(bin, gradient, hessian);
+            }
+        }
+
+        Ok(histogram)
+    }
+
+    /// Constructs multiple FeatureHistogram objects using the optimized approach.
+    pub fn construct_feature_histograms_optimized(
+        &self,
+        features: &ArrayView2<f32>,
+        gradients: &ArrayView1<Score>,
+        hessians: &ArrayView1<Score>,
+        data_indices: &[DataSize],
+        bin_mappers: &[BinMapper],
+        feature_indices: &[FeatureIndex],
+    ) -> anyhow::Result<Vec<FeatureHistogram>> {
+        let mut histograms = Vec::with_capacity(feature_indices.len());
+
+        // Parallel construction across features
+        let results: Result<Vec<_>, _> = feature_indices
+            .par_iter()
+            .enumerate()
+            .map(|(i, &feature_idx)| {
+                let feature_column = features.column(feature_idx);
+                self.construct_feature_histogram_optimized(
+                    &feature_column,
+                    gradients,
+                    hessians,
+                    data_indices,
+                    &bin_mappers[feature_idx],
+                    feature_idx,
+                )
+            })
+            .collect();
+
+        histograms = results.map_err(|e| anyhow::anyhow!("Histogram construction failed: {}", e))?;
+        Ok(histograms)
+    }
+
+    /// Constructs histogram using subtraction method with FeatureHistogram objects.
+    pub fn construct_histogram_by_subtraction_optimized(
+        &self,
+        parent_histogram: &FeatureHistogram,
+        sibling_histogram: &FeatureHistogram,
+        target_feature_index: FeatureIndex,
+    ) -> anyhow::Result<FeatureHistogram> {
+        if parent_histogram.num_bins() != sibling_histogram.num_bins() {
+            return Err(anyhow::anyhow!(
+                "Parent and sibling histograms must have the same number of bins"
+            ));
+        }
+
+        let mut result = FeatureHistogram::new(target_feature_index, parent_histogram.num_bins());
+        result.subtract_from(parent_histogram, sibling_histogram);
+        
+        Ok(result)
     }
 
     /// Dense histogram construction using parallel processing.

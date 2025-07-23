@@ -276,7 +276,130 @@ impl SplitFinder {
         best_split
     }
 
-    /// Calculates the gain for a potential split.
+    /// Finds the best split for a feature using optimized FeatureHistogram.
+    /// This method uses the interleaved storage format for better cache efficiency.
+    pub fn find_best_split_for_feature_optimized(
+        &self,
+        histogram: &crate::tree::histogram::FeatureHistogram,
+        total_sum_gradient: f64,
+        total_sum_hessian: f64,
+        total_count: DataSize,
+        bin_boundaries: &[f64],
+    ) -> Option<SplitInfo> {
+        let num_bins = histogram.num_bins();
+        if num_bins < 2 {
+            return None;
+        }
+
+        let mut best_split = SplitInfo::new();
+        best_split.feature = histogram.feature_index();
+
+        let mut left_sum_gradient = 0.0;
+        let mut left_sum_hessian = 0.0;
+        let mut left_count = 0;
+
+        // Try each possible split point using optimized histogram access
+        for bin in 0..num_bins - 1 {
+            // Accumulate left side statistics using optimized getters
+            left_sum_gradient += histogram.get_gradient(bin);
+            left_sum_hessian += histogram.get_hessian(bin);
+            
+            // Estimate count from hessian (this is an approximation)
+            left_count += (histogram.get_hessian(bin) / (histogram.get_hessian(bin) / histogram.get_gradient(bin).abs().max(1e-6))).round() as DataSize;
+
+            // Calculate right side statistics
+            let right_sum_gradient = total_sum_gradient - left_sum_gradient;
+            let right_sum_hessian = total_sum_hessian - left_sum_hessian;
+            let right_count = total_count - left_count;
+
+            // Check minimum data constraints
+            if left_count < self.config.min_data_in_leaf
+                || right_count < self.config.min_data_in_leaf
+                || left_sum_hessian < self.config.min_sum_hessian_in_leaf
+                || right_sum_hessian < self.config.min_sum_hessian_in_leaf
+            {
+                continue;
+            }
+
+            // Calculate split gain
+            let gain = self.calculate_split_gain(
+                total_sum_gradient,
+                total_sum_hessian,
+                left_sum_gradient,
+                left_sum_hessian,
+                right_sum_gradient,
+                right_sum_hessian,
+            );
+
+            // Check if this split is better
+            if gain > best_split.gain && gain > self.config.min_split_gain {
+                best_split.threshold_bin = bin as BinIndex;
+                best_split.threshold_value = if bin < bin_boundaries.len() {
+                    bin_boundaries[bin]
+                } else {
+                    bin as f64
+                };
+                best_split.gain = gain;
+                best_split.left_sum_gradient = left_sum_gradient;
+                best_split.left_sum_hessian = left_sum_hessian;
+                best_split.left_count = left_count;
+                best_split.right_sum_gradient = right_sum_gradient;
+                best_split.right_sum_hessian = right_sum_hessian;
+                best_split.right_count = right_count;
+
+                // Determine default direction for missing values
+                // Go to the side with larger hessian sum (more confident)
+                best_split.default_left = left_sum_hessian >= right_sum_hessian;
+            }
+        }
+
+        if best_split.is_valid() {
+            best_split.calculate_outputs(self.config.lambda_l1, self.config.lambda_l2);
+            Some(best_split)
+        } else {
+            None
+        }
+    }
+
+    /// Finds the best split among multiple FeatureHistogram objects.
+    pub fn find_best_split_optimized(
+        &self,
+        histograms: &[crate::tree::histogram::FeatureHistogram],
+        total_sum_gradient: f64,
+        total_sum_hessian: f64,
+        total_count: DataSize,
+        bin_boundaries: &[Vec<f64>],
+    ) -> Option<SplitInfo> {
+        let mut best_split: Option<SplitInfo> = None;
+
+        for histogram in histograms {
+            let feature_idx = histogram.feature_index();
+            if feature_idx >= bin_boundaries.len() {
+                continue;
+            }
+
+            if let Some(split) = self.find_best_split_for_feature_optimized(
+                histogram,
+                total_sum_gradient,
+                total_sum_hessian,
+                total_count,
+                &bin_boundaries[feature_idx],
+            ) {
+                match &best_split {
+                    None => best_split = Some(split),
+                    Some(current_best) => {
+                        if split.gain > current_best.gain {
+                            best_split = Some(split);
+                        }
+                    }
+                }
+            }
+        }
+
+        best_split
+    }
+
+    /// Calculates the gain for a potential split with proper L1/L2 regularization.
     fn calculate_split_gain(
         &self,
         total_sum_gradient: f64,
@@ -286,11 +409,43 @@ impl SplitFinder {
         right_sum_gradient: f64,
         right_sum_hessian: f64,
     ) -> f64 {
+        // Basic gain calculation
         let parent_gain = self.calculate_leaf_gain(total_sum_gradient, total_sum_hessian);
         let left_gain = self.calculate_leaf_gain(left_sum_gradient, left_sum_hessian);
         let right_gain = self.calculate_leaf_gain(right_sum_gradient, right_sum_hessian);
+        let mut gain = left_gain + right_gain - parent_gain;
 
-        left_gain + right_gain - parent_gain
+        // Apply additional regularization terms as per C implementation
+        if self.config.lambda_l1 > 0.0 || self.config.lambda_l2 > 0.0 {
+            // Compute optimal leaf outputs (without L1 regularization for split gain calculation)
+            let left_output = if left_sum_hessian + self.config.lambda_l2 > 0.0 {
+                -left_sum_gradient / (left_sum_hessian + self.config.lambda_l2)
+            } else {
+                0.0
+            };
+            let right_output = if right_sum_hessian + self.config.lambda_l2 > 0.0 {
+                -right_sum_gradient / (right_sum_hessian + self.config.lambda_l2)
+            } else {
+                0.0
+            };
+            let parent_output = if total_sum_hessian + self.config.lambda_l2 > 0.0 {
+                -total_sum_gradient / (total_sum_hessian + self.config.lambda_l2)
+            } else {
+                0.0
+            };
+
+            // Apply L1 regularization to split gain
+            gain -= self.config.lambda_l1 * (left_output.abs() + right_output.abs() - parent_output.abs());
+
+            // Apply L2 regularization to split gain  
+            gain -= self.config.lambda_l2 * 0.5 * (
+                left_output * left_output + 
+                right_output * right_output - 
+                parent_output * parent_output
+            );
+        }
+
+        gain
     }
 
     /// Calculates the gain for a leaf node.

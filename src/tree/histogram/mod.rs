@@ -10,6 +10,7 @@ pub mod simd;
 // Re-export key types and traits
 pub use builder::{
     BinMapper, FeatureType, HistogramBuilder, HistogramBuilderConfig,
+    FeatureHistogram, HistogramStatistics,
 };
 pub use pool::{
     HistogramPool, HistogramPoolConfig, HistogramPoolStatistics, HistogramBorrow,
