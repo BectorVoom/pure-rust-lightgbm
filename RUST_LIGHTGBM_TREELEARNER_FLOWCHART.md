@@ -29,6 +29,8 @@ This document provides a comprehensive flowchart illustrating the implementation
 ## Core Data Structures
 
 ### SplitInfo Structure
+⚠️ **NOTE**: Current implementation missing monotonic constraints and categorical support (Issues #102, #103)
+
 ```rust
 pub struct SplitInfo {
     pub feature: FeatureIndex,              // Feature index for the split
@@ -44,6 +46,34 @@ pub struct SplitInfo {
     pub left_output: Score,                 // Left child leaf output
     pub right_output: Score,                // Right child leaf output
     pub default_left: bool,                 // Missing value direction
+    
+    // ❌ MISSING: Monotonic constraint support (Issue #102)
+    // pub monotone_type: i8,                // Monotonic constraint type (-1: decreasing, 0: none, 1: increasing)
+    
+    // ❌ MISSING: Categorical feature support (Issue #103)  
+    // pub cat_threshold: Vec<u32>,          // Categorical split thresholds (bitset representation)
+}
+```
+
+### Complete SplitInfo Structure (Target Implementation)
+```rust
+// Target structure matching C++ LightGBM implementation
+pub struct SplitInfo {
+    pub feature: FeatureIndex,              // Feature index for the split
+    pub threshold_bin: BinIndex,            // Bin threshold for the split
+    pub threshold_value: f64,               // Actual threshold value
+    pub gain: f64,                          // Split gain (improvement in loss function)
+    pub left_sum_gradient: f64,             // Left child gradient sum
+    pub left_sum_hessian: f64,              // Left child hessian sum
+    pub left_count: DataSize,               // Left child data count
+    pub right_sum_gradient: f64,            // Right child gradient sum
+    pub right_sum_hessian: f64,             // Right child hessian sum
+    pub right_count: DataSize,              // Right child data count
+    pub left_output: Score,                 // Left child leaf output
+    pub right_output: Score,                // Right child leaf output
+    pub default_left: bool,                 // Missing value direction
+    pub monotone_type: i8,                  // Monotonic constraint type (-1: decreasing, 0: none, 1: increasing)
+    pub cat_threshold: Vec<u32>,            // Categorical split thresholds (bitset representation)
 }
 ```
 
@@ -94,11 +124,16 @@ pub struct Dataset {
 flowchart TD
     Start([🟢 Start: SerialTreeLearner::train]) --> ValidateInput[⬜ Validate dataset and gradient/hessian arrays]
     
-    ValidateInput --> InitTree[⬜ Initialize Tree with root capacity and shrinkage]
+    ValidateInput --> BeforeTrain[⬜ BeforeTrain(): Setup Data Structures]
+    BeforeTrain --> InitTree[⬜ Initialize Tree with root capacity and shrinkage]
     InitTree --> CalcRootStats[⬡ Calculate root statistics: total_gradients, total_hessians]
     CalcRootStats --> SetRootOutput[⬡ Calculate and set root leaf output]
     
-    SetRootOutput --> SplitLoop[⬜ Initialize split counter and leaf tracking]
+    SetRootOutput --> ForcedSplits{◇ Forced Splits Defined?}
+    ForcedSplits -->|Yes| ApplyForced[⬜ ForceSplits(): Apply JSON-defined splits]
+    ForcedSplits -->|No| SplitLoop[⬜ Initialize split counter and leaf tracking]
+    ApplyForced --> SplitLoop
+    
     SplitLoop --> ClearCache[⬜ Clear histogram cache for reuse]
     
     ClearCache --> CheckLeaves{◇ num_leaves < max_leaves?}
@@ -120,10 +155,44 @@ flowchart TD
     
     UpdateLeafCount --> SplitLoop
     
-    FinalizeOutputs --> ReturnTree[🟢 Return trained Tree]
+    FinalizeOutputs --> QuantizedCheck{◇ Use Quantized Gradients?}
+    QuantizedCheck -->|Yes| RenewLeaf[⬜ Renew leaf outputs with quantized gradients]
+    QuantizedCheck -->|No| ReturnTree[🟢 Return trained Tree]
+    RenewLeaf --> ReturnTree
+```
+
+## BeforeTrain Process Detail
+
+⚠️ **NOTE**: Current Rust implementation lacks this detailed initialization process (Issue #111)
+
+```mermaid
+flowchart TD
+    BeforeStart([🟢 Start: BeforeTrain]) --> ResetPool[⬜ Reset histogram pool]
+    ResetPool --> SampleFeatures[⬜ Column sampler: Reset features by tree]
+    SampleFeatures --> InitTrain[⬜ Initialize training data with selected features]
+    InitTrain --> InitPartition[⬜ DataPartition::Init() - Set all data to root leaf]
+    InitPartition --> ResetConstraints[⬜ Reset monotonic constraints]
+    ResetConstraints --> ResetSplits[⬜ Reset best_split_per_leaf_ array]
+    ResetSplits --> ComputeRoot[⬡ Compute root leaf statistics]
+    
+    ComputeRoot --> UseBagging{◇ Using bagging?}
+    UseBagging -->|Yes| BaggingInit[⬜ smaller_leaf_splits_->Init(leaf=0, partition, gradients, hessians)]
+    UseBagging -->|No| FullInit[⬜ smaller_leaf_splits_->Init(gradients, hessians)]
+    
+    BaggingInit --> InitLarger[⬜ larger_leaf_splits_->Init()]
+    FullInit --> InitLarger
+    InitLarger --> CEGBCheck{◇ Cost-effective gradient boosting enabled?}
+    CEGBCheck -->|Yes| CEGBInit[⬜ cegb_->BeforeTrain()]
+    CEGBCheck -->|No| QuantBitsCheck{◇ Quantized gradients enabled?}
+    CEGBInit --> QuantBitsCheck
+    QuantBitsCheck -->|Yes| SetHistBits[⬜ Set histogram bits for root leaf]
+    QuantBitsCheck -->|No| BeforeEnd[🟢 End: BeforeTrain]
+    SetHistBits --> BeforeEnd
 ```
 
 ## Split Finding Algorithm Detail
+
+⚠️ **NOTE**: Current implementation missing constraint validation and CEGB integration (Issues #102, #103, #108)
 
 ```mermaid
 flowchart TD
@@ -148,9 +217,30 @@ flowchart TD
     
     IterateFeatures --> FeatureLoop[⬜ For each allowed feature]
     FeatureLoop --> GetBinMapper[⬜ Get BinMapper for current feature]
-    GetBinMapper --> FindFeatureSplit[⬜ SplitFinder::find_best_split_for_feature()]
+    GetBinMapper --> CheckNumerical{◇ Numerical feature?}
     
-    FindFeatureSplit --> ValidateConstraints[⬜ ConstraintManager::validate_split()]
+    CheckNumerical -->|Yes| CheckMonotone{◇ Monotonic constraints enabled?}
+    CheckNumerical -->|No| CategoricalSplit[⬡ FindBestThresholdCategorical()]
+    
+    CheckMonotone -->|Yes| RecomputeConstraints[⬜ Recompute constraints for feature]
+    CheckMonotone -->|No| NumericalSplit[⬡ FindBestThreshold()]
+    RecomputeConstraints --> NumericalSplit
+    
+    NumericalSplit --> CheckQuantized{◇ Using quantized gradients?}
+    CheckQuantized -->|Yes| QuantizedThreshold[⬡ FindBestThresholdInt()]
+    CheckQuantized -->|No| SetFeature[⬜ new_split.feature = real_feature_index]
+    QuantizedThreshold --> SetFeature
+    CategoricalSplit --> SetFeature
+    
+    SetFeature --> CEGBCheck{◇ CEGB enabled?}
+    CEGBCheck -->|Yes| ApplyCEGB[⬡ new_split.gain -= cegb_->DeltaGain()]
+    CEGBCheck -->|No| MonotoneCheck{◇ Monotonic split?}
+    ApplyCEGB --> MonotoneCheck
+    
+    MonotoneCheck -->|Yes| ApplyPenalty[⬡ new_split.gain *= monotone_penalty]
+    MonotoneCheck -->|No| ValidateConstraints[⬜ ConstraintManager::validate_split()]
+    ApplyPenalty --> ValidateConstraints
+    
     ValidateConstraints --> CheckSplitValid{◇ Split valid and better than current best?}
     CheckSplitValid -->|Yes| UpdateBest[⬜ Update best_split = new split]
     CheckSplitValid -->|No| NextFeature[⬜ Continue to next feature]
@@ -274,22 +364,48 @@ fn calculate_leaf_output(sum_gradient: f64, sum_hessian: f64, lambda_l1: f64, la
 }
 ```
 
+**Path Smoothing (Issue #105 - Missing in current implementation):**
+```rust
+// After calculating base leaf output, apply path smoothing if enabled
+if path_smooth > 0.0 {
+    let smoothing_factor = (data_count as f64 / path_smooth) / (data_count as f64 / path_smooth + 1.0);
+    let parent_factor = 1.0 / (data_count as f64 / path_smooth + 1.0);
+    leaf_output = leaf_output * smoothing_factor + parent_output * parent_factor;
+}
+```
+
+**Complete path smoothing formula from C++:**
+```
+smoothed_output = output × (n/α) / (n/α + 1) + parent_output / (n/α + 1)
+```
+
 **Variables:**
 - `sum_gradients` (f64): Sum of first-order gradients in node
 - `sum_hessians` (f64): Sum of second-order gradients (Hessians) in node  
 - `λ₁` (f64): L1 regularization parameter (`lambda_l1`)
 - `λ₂` (f64): L2 regularization parameter (`lambda_l2`)
+- `α` (f64): Path smoothing parameter (`path_smooth`) - Missing in current implementation
+- `n` (DataSize): Number of data points in leaf
+- `parent_output` (f64): Output of parent node - Required for path smoothing
 
 ### 2. Split Gain Calculation
 
-The gain from a split is computed exactly as in the C++ LightGBM implementation:
+The gain from a split is computed using the exact mathematical formula matching C++ LightGBM implementation:
 
-**Formula:**
+**Complete Mathematical Formula:**
 ```
-gain = gain_left + gain_right - gain_parent
+gain = G_left²/(H_left + λ₂) + G_right²/(H_right + λ₂) - G_parent²/(H_parent + λ₂)
 ```
 
-**Individual leaf gain calculation:**
+**With L1 regularization (exact C++ formula):**
+```
+gain = ThresholdL1(G_left, λ₁)²/(H_left + λ₂) + ThresholdL1(G_right, λ₁)²/(H_right + λ₂) - ThresholdL1(G_parent, λ₁)²/(H_parent + λ₂)
+
+where:
+ThresholdL1(g, λ₁) = sign(g) × max(0, |g| - λ₁)
+```
+
+**Individual leaf gain calculation (bit-exact C++ implementation):**
 ```rust
 fn calculate_leaf_gain_exact(sum_gradient: f64, sum_hessian: f64, lambda_l1: f64, lambda_l2: f64) -> f64 {
     if sum_hessian + lambda_l2 <= 0.0 {
@@ -311,9 +427,19 @@ fn calculate_leaf_gain_exact(sum_gradient: f64, sum_hessian: f64, lambda_l1: f64
 }
 ```
 
+**Constraint validation (monotonic):**
+```rust
+// Monotonic constraint check (Issue #102 - Missing in current implementation)
+if monotone_type > 0 && left_output > right_output { return 0.0; }
+if monotone_type < 0 && left_output < right_output { return 0.0; }
+```
+
 **Variables:**
-- `gain_left`, `gain_right`, `gain_parent` (f64): Individual node gains
-- Uses exact bit-compatible formula from C++ LightGBM implementation
+- `G_left`, `G_right`, `G_parent` (f64): Sum of gradients in left child, right child, and parent
+- `H_left`, `H_right`, `H_parent` (f64): Sum of hessians in left child, right child, and parent
+- `λ₁` (f64): L1 regularization parameter (`lambda_l1`)
+- `λ₂` (f64): L2 regularization parameter (`lambda_l2`)
+- `monotone_type` (i8): Constraint type (-1: decreasing, 0: none, 1: increasing)
 
 ### 3. Histogram Construction
 
@@ -370,7 +496,33 @@ pub fn subtract_from(&mut self, parent: &FeatureHistogram, sibling: &FeatureHist
 - Subtract from parent to get larger child histogram
 - Reduces computation by ~50% for sibling nodes
 
-### 5. Feature Binning
+### 5. Quantized Gradients (Issue #109 - Missing in current implementation)
+
+When enabled, gradients and hessians are quantized to reduce memory usage:
+
+**Quantization formula:**
+```rust
+// Quantization (missing in current implementation)
+let int_gradient = (gradient / grad_scale).round() as i32;
+let int_hessian = (hessian / hess_scale).round() as i32;
+let packed_value = ((int_gradient as u64) << 32) | (int_hessian as u32 as u64);
+```
+
+**Dequantization formula:**
+```rust
+// Dequantization (missing in current implementation)  
+let int_gradient = (packed_value >> 32) as i32;
+let int_hessian = (packed_value & 0xFFFFFFFF) as i32;
+let gradient = int_gradient as f64 * grad_scale;
+let hessian = int_hessian as f64 * hess_scale;
+```
+
+**Variables:**
+- `grad_scale`, `hess_scale` (f64): Scaling factors for quantization
+- `packed_value` (u64): 64-bit packed gradient and hessian
+- Benefit: Reduced memory footprint and improved cache efficiency
+
+### 6. Feature Binning
 
 Numerical features are discretized using quantile-based binning:
 
