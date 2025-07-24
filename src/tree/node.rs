@@ -214,10 +214,29 @@ impl TreeNode {
 
     /// Calculates the optimal leaf output using the given regularization parameters.
     pub fn calculate_leaf_output(&self, lambda_l1: f64, lambda_l2: f64) -> Score {
+        self.calculate_leaf_output_with_smoothing(lambda_l1, lambda_l2, 0.0, 0.0)
+    }
+
+    /// Calculates the optimal leaf output with optional path smoothing.
+    /// **Addresses Issue #105**: Added path smoothing support matching C++ LightGBM
+    /// 
+    /// # Arguments
+    /// * `lambda_l1` - L1 regularization parameter
+    /// * `lambda_l2` - L2 regularization parameter  
+    /// * `path_smooth` - Path smoothing parameter (α). If 0.0, no smoothing is applied
+    /// * `parent_output` - Output of parent node (required for path smoothing)
+    pub fn calculate_leaf_output_with_smoothing(
+        &self,
+        lambda_l1: f64,
+        lambda_l2: f64,
+        path_smooth: f64,
+        parent_output: f64,
+    ) -> Score {
         if self.sum_hessians <= 0.0 {
             return 0.0;
         }
 
+        // Calculate base leaf output using Newton-Raphson with L1/L2 regularization
         let numerator = if lambda_l1 > 0.0 {
             if self.sum_gradients > lambda_l1 {
                 self.sum_gradients - lambda_l1
@@ -231,7 +250,17 @@ impl TreeNode {
         };
 
         let denominator = self.sum_hessians + lambda_l2;
-        (-numerator / denominator) as Score
+        let base_output = (-numerator / denominator) as Score;
+
+        // Apply path smoothing if enabled (matching C++ LightGBM formula)
+        if path_smooth > 0.0 {
+            let data_count = self.data_count as f64;
+            let smoothing_factor = (data_count / path_smooth) / (data_count / path_smooth + 1.0);
+            let parent_factor = 1.0 / (data_count / path_smooth + 1.0);
+            (base_output * smoothing_factor + parent_output * parent_factor) as Score
+        } else {
+            base_output
+        }
     }
 
     /// Calculates the split gain for this node's split.
@@ -391,5 +420,51 @@ mod tests {
         let node = TreeNode::new_leaf(20.0, 10.0, 100, 1, None);
         let gain = node.calculate_split_gain(15.0, 6.0, 5.0, 4.0, 0.0, 0.1);
         assert!(gain > 0.0);
+    }
+
+    #[test]
+    fn test_path_smoothing() {
+        let node = TreeNode::new_leaf(-10.0, 5.0, 100, 0, None);
+        
+        // Test without path smoothing (should match regular calculation)
+        let output_no_smooth = node.calculate_leaf_output(0.0, 0.1);
+        let output_with_smooth_zero = node.calculate_leaf_output_with_smoothing(0.0, 0.1, 0.0, 0.0);
+        assert!((output_no_smooth - output_with_smooth_zero).abs() < 1e-6);
+        
+        // Test with path smoothing enabled
+        let parent_output = 1.0;
+        let path_smooth = 50.0; // α parameter
+        let output_smoothed = node.calculate_leaf_output_with_smoothing(0.0, 0.1, path_smooth, parent_output);
+        
+        // Verify smoothing formula: smoothed = base * (n/α)/(n/α + 1) + parent / (n/α + 1)
+        let n = 100.0; // data_count
+        let smoothing_factor = (n / path_smooth) / (n / path_smooth + 1.0);
+        let parent_factor = 1.0 / (n / path_smooth + 1.0);
+        let expected = output_no_smooth * smoothing_factor + parent_output * parent_factor;
+        
+        assert!((output_smoothed - expected as f32).abs() < 1e-5);
+        
+        // Verify that smoothed output is between base output and parent output
+        assert!(output_smoothed < output_no_smooth.max(parent_output as f32));
+        assert!(output_smoothed > output_no_smooth.min(parent_output as f32));
+    }
+
+    #[test]
+    fn test_path_smoothing_extreme_cases() {
+        let node = TreeNode::new_leaf(-10.0, 5.0, 100, 0, None);
+        let parent_output = 1.0;
+        
+        // Test with very small path_smooth (strong smoothing toward parent)
+        let output_strong_smooth = node.calculate_leaf_output_with_smoothing(0.0, 0.1, 1.0, parent_output);
+        
+        // Test with very large path_smooth (weak smoothing, close to base)
+        let output_weak_smooth = node.calculate_leaf_output_with_smoothing(0.0, 0.1, 10000.0, parent_output);
+        let base_output = node.calculate_leaf_output(0.0, 0.1);
+        
+        // Strong smoothing should be closer to parent
+        assert!((output_strong_smooth - parent_output as f32).abs() < (base_output - parent_output as f32).abs());
+        
+        // Weak smoothing should be closer to base
+        assert!((output_weak_smooth - base_output).abs() < 0.1);
     }
 }

@@ -17,7 +17,7 @@ use crate::tree::split::{
 use crate::tree::tree::Tree;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rayon::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Configuration for the serial tree learner.
@@ -217,7 +217,7 @@ impl SerialTreeLearner {
         dataset: &Dataset,
         gradients: &ArrayView1<Score>,
         hessians: &ArrayView1<Score>,
-        _iteration: usize,
+        iteration: usize,
     ) -> anyhow::Result<Tree> {
         if dataset.num_data == 0 {
             return Err(anyhow::anyhow!("Dataset is empty"));
@@ -227,6 +227,9 @@ impl SerialTreeLearner {
            hessians.len() != dataset.num_data as usize {
             return Err(anyhow::anyhow!("Gradient and hessian arrays must match dataset size"));
         }
+
+        // **Addresses Issue #111**: BeforeTrain workflow matching C++ LightGBM
+        self.before_train(dataset, iteration)?;
 
         // Initialize tree with root node
         let mut tree = Tree::with_capacity(self.config.max_leaves, self.config.learning_rate);
@@ -248,9 +251,9 @@ impl SerialTreeLearner {
             root_node.set_leaf_output(root_output);
         }
 
-        // Initialize queue with root node
-        let mut node_queue = VecDeque::new();
-        node_queue.push_back(NodeInfo::new(
+        // Initialize candidate leaf nodes with root node
+        let mut candidate_leaves = Vec::new();
+        candidate_leaves.push(NodeInfo::new(
             0,
             all_data_indices,
             0,
@@ -261,44 +264,61 @@ impl SerialTreeLearner {
         // Clear histogram cache
         self.node_histograms.clear();
 
-        // Build tree iteratively using breadth-first approach
-        // This allows for histogram subtraction optimization between sibling nodes
-        while let Some(node_info) = node_queue.pop_front() {
-            if tree.num_leaves() >= self.config.max_leaves {
-                break;
-            }
+        // Build tree iteratively using max-gain leaf selection (matching C++ LightGBM)
+        // Always select the leaf with maximum split gain for the next split
+        while tree.num_leaves() < self.config.max_leaves && !candidate_leaves.is_empty() {
+            // Find best splits for all candidate leaves
+            let mut best_leaf_index = None;
+            let mut best_split_info = None;
+            let mut max_gain = self.config.min_split_gain;
 
-            if node_info.depth >= self.config.max_depth {
-                continue;
-            }
+            for (leaf_idx, node_info) in candidate_leaves.iter().enumerate() {
+                // Skip if node exceeds max depth
+                if node_info.depth >= self.config.max_depth {
+                    continue;
+                }
 
-            if let Some(split_result) = self.find_best_split(
-                dataset,
-                gradients,
-                hessians,
-                &node_info,
-            )? {
-                // Apply the split
-                let (left_child_info, right_child_info) = self.apply_split(
-                    &mut tree,
+                if let Some(split_result) = self.find_best_split(
                     dataset,
                     gradients,
                     hessians,
-                    &node_info,
-                    &split_result,
-                )?;
-
-                // Cache parent histogram for potential subtraction optimization
-                if self.config.use_histogram_subtraction {
-                    // We'll cache parent histograms when we construct them
-                    // This is handled in the find_best_split method
+                    node_info,
+                )? {
+                    if split_result.gain > max_gain {
+                        best_leaf_index = Some(leaf_idx);
+                        best_split_info = Some(split_result);
+                        max_gain = split_result.gain;
+                    }
                 }
-
-                // Add children to queue - order matters for subtraction optimization
-                // Process both children to enable sibling subtraction
-                node_queue.push_back(left_child_info);
-                node_queue.push_back(right_child_info);
             }
+
+            // If no valid split found, break
+            let (best_idx, split_info) = match (best_leaf_index, best_split_info) {
+                (Some(idx), Some(split)) => (idx, split),
+                _ => break,
+            };
+
+            // Remove the selected leaf from candidates and apply split
+            let selected_leaf = candidate_leaves.swap_remove(best_idx);
+            
+            let (left_child_info, right_child_info) = self.apply_split(
+                &mut tree,
+                dataset,
+                gradients,
+                hessians,
+                &selected_leaf,
+                &split_info,
+            )?;
+
+            // Cache parent histogram for potential subtraction optimization
+            if self.config.use_histogram_subtraction {
+                // We'll cache parent histograms when we construct them
+                // This is handled in the find_best_split method
+            }
+
+            // Add children to candidate leaves for future splitting
+            candidate_leaves.push(left_child_info);
+            candidate_leaves.push(right_child_info);
         }
 
         // Set final leaf outputs for all leaf nodes
@@ -670,6 +690,40 @@ impl SerialTreeLearner {
     pub fn reset(&mut self) {
         self.feature_sampler.reset();
         self.node_histograms.clear();
+    }
+
+    /// BeforeTrain initialization workflow matching C++ LightGBM implementation.
+    /// **Addresses Issue #111**: Added comprehensive BeforeTrain workflow
+    fn before_train(&mut self, dataset: &Dataset, iteration: usize) -> anyhow::Result<()> {
+        // Reset histogram pool for reuse
+        {
+            let mut pool = self.histogram_builder.histogram_pool().lock().unwrap();
+            pool.reset();
+        }
+
+        // Reset feature sampler for new tree (column sampling)
+        self.feature_sampler.reset();
+        
+        // Sample features for this tree if column sampling is enabled
+        let _sampled_features = self.feature_sampler.sample_features(
+            dataset.num_features,
+            iteration,
+        )?;
+
+        // Reset monotonic constraints (would be configured per-tree if needed)
+        // TODO: Add reset_constraints method to ConstraintManager
+        // self.constraint_manager.reset_constraints();
+
+        // Clear histogram cache from previous tree
+        self.node_histograms.clear();
+
+        // Note: In full C++ implementation, this would also:
+        // - Initialize data partition structures  
+        // - Set up CEGB (Cost-Effective Gradient Boosting) if enabled
+        // - Configure quantized gradients if enabled
+        // These features are not yet implemented (see Issues #108, #109)
+
+        Ok(())
     }
 }
 
