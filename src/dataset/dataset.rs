@@ -547,6 +547,37 @@ impl Dataset {
 
         usage
     }
+
+    /// Get number of queries (for ranking datasets)
+    pub fn num_queries(&self) -> Option<DataSize> {
+        self.groups.as_ref().map(|g| g.len() as DataSize)
+    }
+
+    /// Get query boundaries (for ranking datasets)
+    pub fn query_boundaries(&self) -> Option<&[DataSize]> {
+        self.groups.as_ref().map(|g| g.as_slice().unwrap())
+    }
+
+    /// Get number of feature groups (placeholder implementation)
+    pub fn num_feature_groups(&self) -> usize {
+        // For now, assume each feature is its own group
+        // This would be properly implemented based on feature binning/grouping strategy
+        self.num_features
+    }
+
+    /// Get valid feature indices (all features are considered valid for now)
+    pub fn valid_feature_indices(&self) -> Vec<i32> {
+        (0..self.num_features as i32).collect()
+    }
+
+    /// Get inner feature index from feature index (for now, they are the same)
+    pub fn inner_feature_index(&self, feature_index: i32) -> i32 {
+        if feature_index >= 0 && (feature_index as usize) < self.num_features {
+            feature_index
+        } else {
+            -1
+        }
+    }
 }
 
 /// Dataset builder for constructing datasets with validation

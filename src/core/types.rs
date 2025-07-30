@@ -133,11 +133,11 @@ impl fmt::Display for BoostingType {
 pub enum TreeLearnerType {
     /// Serial tree learning
     Serial,
-    /// Feature PARALLEL tree learning
+    /// Feature parallel tree learning
     Feature,
-    /// Data PARALLEL tree learning
+    /// Data parallel tree learning
     Data,
-    /// Voting PARALLEL tree learning
+    /// Voting parallel tree learning
     Voting,
 }
 
@@ -316,16 +316,16 @@ impl Default for TrainingHistory {
     }
 }
 
-/// Verbosity levels with SILENT option
+/// Verbosity levels with Silent option
 impl VerbosityLevel {
-    /// SILENT mode (no  output)
-    pub const SILENT: Self = VerbosityLevel::Fatal;
+    /// Silent mode (no output)
+    pub const Silent: Self = VerbosityLevel::Fatal;
 }
 
-/// PARALLEL tree learner types (aliases for existing types)
+/// Parallel tree learner types (aliases for existing types)
 impl TreeLearnerType {
-    /// PARALLEL tree learning (alias for Feature)
-    pub const PARALLEL: Self = TreeLearnerType::Feature;
+    /// Parallel tree learning (alias for Feature)
+    pub const Parallel: Self = TreeLearnerType::Feature;
 }
 
 #[cfg(test)]

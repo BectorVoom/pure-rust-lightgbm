@@ -38,19 +38,34 @@
 //! ```
 
 // Public module declarations
+pub mod bin;
+pub mod config;
 pub mod constants;
 pub mod error;
-pub mod memory;
-pub mod traits;
-pub mod types;
+pub mod feature_group;
 
+pub mod gpu;
+
+pub mod memory;
+pub mod network;
+pub mod prediction_early_stop;
+pub mod sample_strategy;
+/// Training share states module
+pub mod train_share_states;
+pub mod traits;
+pub mod tree_learner;
+pub mod types;
+/// Utilities module
+pub mod utils;
 // Re-export commonly used items for convenience
 pub use constants::*;
 pub use error::{LightGBMError, Result};
 pub use memory::{AlignedBuffer, MemoryPool, MemoryStats};
+pub mod meta;
 pub use traits::*;
 pub use types::*;
-
+/// Dataset module
+pub mod dataset;
 /// Version information for the core module
 pub const CORE_MODULE_VERSION: &str = env!("CARGO_PKG_VERSION");
 

@@ -9,40 +9,10 @@ license = "MIT OR Apache-2.0"
 keywords = ["machine-learning", "gradient-boosting", "lightgbm", "gbdt", "ml"]
 categories = ["algorithms", "science", "mathematics"]
 readme = "README.md"
-rust-version = "1.75"
 
 [workspace]
-members = [
-    "."
-]
+members = ["."]
 
-[[bin]]
-name = "test_missing_values"
-path = "test_missing_values.rs"
-
-[[bin]]
-name = "test_feature_importance"
-path = "test_feature_importance.rs"
-
-[[bin]]
-name = "debug_split_finding"
-path = "debug_split_finding.rs"
-
-[[bin]]
-name = "test_ensemble"
-path = "test_ensemble.rs"
-
-[[bin]]
-name = "test_ensemble_simple"
-path = "test_ensemble_simple.rs"
-
-[[bin]]
-name = "test_hyperopt"
-path = "test_hyperopt.rs"
-
-[[bin]]
-name = "test_complete_workflow"
-path = "test_complete_workflow.rs"
 
 [features]
 default = ["cpu", "polars", "csv"]
@@ -51,6 +21,11 @@ gpu = ["cubecl"]
 async = ["tokio"]
 python = ["pyo3"]
 full = ["cpu", "gpu", "async", "python", "polars", "csv"]
+# LightGBM-specific features
+score_t_use_double = []
+label_t_use_double = []
+no_omp = []
+cubecl = ["dep:cubecl"]
 
 [dependencies]
 # Core numerical computing
@@ -62,10 +37,15 @@ num_cpus = "1.17.0"
 rayon = "1.10.0"
 
 # GPU acceleration (optional)
-cubecl = { version = "0.5", features = ["cuda", "wgpu"], optional = true }
+cubecl = { version = "0.6", features = ["cuda", "wgpu"], optional = true }
 
 # DataFrame support
-polars = { version = "0.49.1", features = ["lazy", "csv", "parquet", "ipc"], optional = true }
+polars = { version = "0.49.1", features = [
+  "lazy",
+  "csv",
+  "parquet",
+  "ipc",
+], optional = true }
 memmap2 = "0.9"
 
 # CSV processing
@@ -87,9 +67,12 @@ toml = "0.8"
 
 # Compile-time checks
 static_assertions = "1.1"
+lazy_static = "1.4"
 
 # Random number generation
 rand = "0.8"
+rand_xoshiro = "0.6"
+crossbeam-channel = "0.5"
 
 # Date and time handling
 chrono = { version = "0.4", features = ["serde"] }
@@ -104,6 +87,11 @@ tokio = { version = "1.0", features = ["full"], optional = true }
 
 # Python bindings (optional)
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+rand_chacha = "0.9.0"
+glam = "0.30.5"
+arrow2 = "0.18.0"
+arrow-rayon = "0.0.3"
+cubecl-cuda = "0.6.0"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -132,3 +120,32 @@ rustdoc-args = ["--cfg", "docsrs"]
 [lib]
 name = "lightgbm_rust"
 crate-type = ["lib", "cdylib"]
+
+
+[[bin]]
+name = "test_common_equivalence"
+path = "test_common_equivalence.rs"
+
+[[bin]]
+name = "test_threading_standalone"
+path = "test_threading_standalone.rs"
+
+[[bin]]
+name = "test_real_threading"
+path = "test_real_threading.rs"
+
+[[bin]]
+name = "test_array_args_equivalence"
+path = "test_array_args_equivalence.rs"
+
+[[bin]]
+name = "test_byte_buffer_equivalence"
+path = "test_byte_buffer_equivalence.rs"
+
+[[bin]]
+name = "test_meta_equivalence"
+path = "test_meta_equivalence.rs"
+
+[[bin]]
+name = "test_random_equivalence"
+path = "src/bin/test_random_equivalence.rs"

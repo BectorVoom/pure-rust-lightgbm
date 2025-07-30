@@ -5,22 +5,30 @@
 //! - SHAP value computation for feature importance
 //! - Feature importance calculation
 //! - Early stopping mechanisms for prediction
+//! - Prediction early stopping for inference optimization
 //! - Leaf index prediction for advanced analysis
 
 use crate::core::error::{LightGBMError, Result};
 use crate::core::types::*;
 use ndarray::ArrayView1;
 
-pub mod predictor;
-pub mod shap;
-pub mod feature_importance;
+// pub mod predictor;
+// pub mod shap;
+// pub mod feature_importance;
 pub mod early_stopping;
-pub mod leaf_index;
+pub mod prediction_early_stop;
+// pub mod leaf_index;
 
-// Re-export main prediction functionality
-pub use predictor::{PredictionConfig, Predictor, PredictorTrait};
-pub use shap::{SHAPCalculator, SHAPConfig};
-pub use feature_importance::{FeatureImportanceCalculator, ImportanceType};
+// Re-export main prediction functionality (placeholder)
+// pub use predictor::{PredictionConfig, Predictor, PredictorTrait};
+// pub use shap::{SHAPCalculator, SHAPConfig};
+// pub use feature_importance::{FeatureImportanceCalculator, ImportanceType};
+
+// Re-export prediction early stopping functionality
+pub use prediction_early_stop::{
+    create_binary, create_multiclass, create_none, create_prediction_early_stop_instance,
+    PredictionEarlyStopConfig, PredictionEarlyStopInstance,
+};
 
 /// Histogram pool for managing histogram allocation and reuse
 #[derive(Debug)]

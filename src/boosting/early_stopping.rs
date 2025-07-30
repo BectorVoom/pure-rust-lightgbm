@@ -3,7 +3,7 @@
 //! This module provides early stopping functionality to prevent overfitting
 //! by monitoring validation metrics and stopping training when improvements plateau.
 
-use crate::core::types::{IterationIndex, Score};
+use crate::core::types::IterationIndex;
 use std::collections::VecDeque;
 
 /// Configuration for early stopping behavior.
@@ -55,8 +55,12 @@ pub struct EarlyStopping {
 impl EarlyStopping {
     /// Creates a new early stopping monitor with the given configuration.
     pub fn new(config: EarlyStoppingConfig) -> Self {
-        let initial_metric = if config.minimize { f64::INFINITY } else { f64::NEG_INFINITY };
-        
+        let initial_metric = if config.minimize {
+            f64::INFINITY
+        } else {
+            f64::NEG_INFINITY
+        };
+
         EarlyStopping {
             config,
             best_metric: initial_metric,
@@ -77,7 +81,7 @@ impl EarlyStopping {
 
         // Add to history
         self.metric_history.push_back(metric);
-        
+
         // Apply smoothing if configured
         let smoothed_metric = self.apply_smoothing(metric);
         self.smoothed_history.push_back(smoothed_metric);
@@ -97,7 +101,7 @@ impl EarlyStopping {
             self.best_metric = smoothed_metric;
             self.best_iteration = iteration;
             self.patience_counter = 0;
-            
+
             // Record improvement
             let improvement = self.calculate_improvement(smoothed_metric);
             self.improvement_history.push(improvement);
@@ -126,7 +130,10 @@ impl EarlyStopping {
             return current_metric;
         }
 
-        let window_size = self.config.smoothing_window.min(self.metric_history.len() + 1);
+        let window_size = self
+            .config
+            .smoothing_window
+            .min(self.metric_history.len() + 1);
         let mut sum = current_metric;
         let mut count = 1;
 
@@ -206,7 +213,11 @@ impl EarlyStopping {
 
     /// Resets the early stopping state.
     pub fn reset(&mut self) {
-        self.best_metric = if self.config.minimize { f64::INFINITY } else { f64::NEG_INFINITY };
+        self.best_metric = if self.config.minimize {
+            f64::INFINITY
+        } else {
+            f64::NEG_INFINITY
+        };
         self.best_iteration = 0;
         self.patience_counter = 0;
         self.metric_history.clear();
@@ -233,15 +244,17 @@ impl EarlyStopping {
 
         // Calculate recent improvement trend
         let recent_window = 5.min(self.improvement_history.len());
-        let recent_improvements: Vec<f64> = self.improvement_history
+        let recent_improvements: Vec<f64> = self
+            .improvement_history
             .iter()
             .rev()
             .take(recent_window)
             .copied()
             .collect();
 
-        let avg_recent_improvement = recent_improvements.iter().sum::<f64>() / recent_improvements.len() as f64;
-        
+        let avg_recent_improvement =
+            recent_improvements.iter().sum::<f64>() / recent_improvements.len() as f64;
+
         // If improvement is consistently near zero, estimate based on patience
         if avg_recent_improvement < self.config.min_delta / 10.0 {
             Some(self.config.patience - self.patience_counter)
@@ -255,9 +268,17 @@ impl EarlyStopping {
     /// Returns statistics about the early stopping behavior.
     pub fn statistics(&self) -> EarlyStoppingStatistics {
         let total_iterations = self.metric_history.len();
-        let improvements = self.improvement_history.iter().filter(|&&x| x > 0.0).count();
+        let improvements = self
+            .improvement_history
+            .iter()
+            .filter(|&&x| x > 0.0)
+            .count();
         let avg_improvement = if improvements > 0 {
-            self.improvement_history.iter().filter(|&&x| x > 0.0).sum::<f64>() / improvements as f64
+            self.improvement_history
+                .iter()
+                .filter(|&&x| x > 0.0)
+                .sum::<f64>()
+                / improvements as f64
         } else {
             0.0
         };
@@ -288,10 +309,12 @@ impl EarlyStopping {
         }
 
         let mean = self.smoothed_history.iter().sum::<f64>() / self.smoothed_history.len() as f64;
-        let variance = self.smoothed_history
+        let variance = self
+            .smoothed_history
             .iter()
             .map(|&x| (x - mean).powi(2))
-            .sum::<f64>() / self.smoothed_history.len() as f64;
+            .sum::<f64>()
+            / self.smoothed_history.len() as f64;
 
         variance
     }
@@ -380,35 +403,57 @@ impl MultiMetricEarlyStopping {
 
         // Update each monitor
         for (metric_name, metric_value) in metrics {
-            if let Some((_, monitor)) = self.monitors.iter_mut().find(|(name, _)| name == metric_name) {
+            if let Some((_, monitor)) = self
+                .monitors
+                .iter_mut()
+                .find(|(name, _)| name == metric_name)
+            {
                 monitor.update(*metric_value, iteration);
             }
         }
 
         // Determine if we should stop based on combination strategy
         self.stopped = match self.combination_strategy {
-            CombinationStrategy::Any => {
-                self.monitors.iter().any(|(_, monitor)| monitor.should_stop())
-            }
+            CombinationStrategy::Any => self
+                .monitors
+                .iter()
+                .any(|(_, monitor)| monitor.should_stop()),
             CombinationStrategy::All => {
-                !self.monitors.is_empty() && self.monitors.iter().all(|(_, monitor)| monitor.should_stop())
+                !self.monitors.is_empty()
+                    && self
+                        .monitors
+                        .iter()
+                        .all(|(_, monitor)| monitor.should_stop())
             }
             CombinationStrategy::Majority => {
-                let stopped_count = self.monitors.iter().filter(|(_, monitor)| monitor.should_stop()).count();
+                let stopped_count = self
+                    .monitors
+                    .iter()
+                    .filter(|(_, monitor)| monitor.should_stop())
+                    .count();
                 stopped_count > self.monitors.len() / 2
             }
             CombinationStrategy::Primary => {
                 // Use first metric as primary
-                self.monitors.first().map_or(false, |(_, monitor)| monitor.should_stop())
+                self.monitors
+                    .first()
+                    .map_or(false, |(_, monitor)| monitor.should_stop())
             }
         };
 
         if self.stopped {
-            log::info!("Multi-metric early stopping triggered at iteration {}", iteration);
+            log::info!(
+                "Multi-metric early stopping triggered at iteration {}",
+                iteration
+            );
             for (name, monitor) in &self.monitors {
                 if monitor.should_stop() {
-                    log::info!("  {} stopped (best: {:.6} at iteration {})", 
-                        name, monitor.best_metric(), monitor.best_iteration());
+                    log::info!(
+                        "  {} stopped (best: {:.6} at iteration {})",
+                        name,
+                        monitor.best_metric(),
+                        monitor.best_iteration()
+                    );
                 }
             }
         }
@@ -432,12 +477,14 @@ impl MultiMetricEarlyStopping {
     /// Returns the best iteration considering all metrics.
     pub fn best_iteration(&self) -> IterationIndex {
         match self.combination_strategy {
-            CombinationStrategy::Primary => {
-                self.monitors.first().map_or(0, |(_, monitor)| monitor.best_iteration())
-            }
+            CombinationStrategy::Primary => self
+                .monitors
+                .first()
+                .map_or(0, |(_, monitor)| monitor.best_iteration()),
             _ => {
                 // Return the most common best iteration
-                let iterations: Vec<IterationIndex> = self.monitors
+                let iterations: Vec<IterationIndex> = self
+                    .monitors
                     .iter()
                     .map(|(_, monitor)| monitor.best_iteration())
                     .collect();
@@ -464,14 +511,16 @@ impl MultiMetricEarlyStopping {
 
     /// Returns a reference to a specific monitor.
     pub fn get_monitor(&self, name: &str) -> Option<&EarlyStopping> {
-        self.monitors.iter()
+        self.monitors
+            .iter()
             .find(|(monitor_name, _)| monitor_name == name)
             .map(|(_, monitor)| monitor)
     }
 
     /// Returns a mutable reference to a specific monitor.
     pub fn get_monitor_mut(&mut self, name: &str) -> Option<&mut EarlyStopping> {
-        self.monitors.iter_mut()
+        self.monitors
+            .iter_mut()
             .find(|(monitor_name, _)| monitor_name == name)
             .map(|(_, monitor)| monitor)
     }
@@ -485,7 +534,7 @@ mod tests {
     fn test_early_stopping_creation() {
         let config = EarlyStoppingConfig::default();
         let early_stopping = EarlyStopping::new(config);
-        
+
         assert!(!early_stopping.should_stop());
         assert_eq!(early_stopping.patience_counter(), 0);
         assert_eq!(early_stopping.best_metric(), f64::INFINITY);
@@ -594,14 +643,14 @@ mod tests {
     #[test]
     fn test_multi_metric_early_stopping() {
         let mut multi_es = MultiMetricEarlyStopping::new(CombinationStrategy::Any);
-        
+
         let config1 = EarlyStoppingConfig {
             patience: 2,
             min_delta: 0.01,
             minimize: true,
             ..Default::default()
         };
-        
+
         let config2 = EarlyStoppingConfig {
             patience: 3,
             min_delta: 0.01,

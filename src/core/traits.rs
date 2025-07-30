@@ -116,7 +116,7 @@ pub trait ObjectiveFunction: Send + Sync + Debug {
 }
 
 /// Trait for tree learning algorithms.
-pub trait TreeLearner: Send + Sync + Debug {
+pub trait TreeLearner: Send + Sync {
     /// Train a single decision tree.
     fn train_tree(
         &mut self,
@@ -137,6 +137,19 @@ pub trait TreeLearner: Send + Sync + Debug {
 
     /// Set the number of threads for parallel processing.
     fn set_num_threads(&mut self, num_threads: usize);
+
+    /// Set bagging data for the tree learner.
+    /// 
+    /// # Arguments
+    /// * `subset` - Optional subset dataset to use for training
+    /// * `used_indices` - Optional array of data indices to use for training
+    /// * `num_data` - Number of data points to use
+    fn set_bagging_data(
+        &mut self,
+        subset: Option<&crate::dataset::Dataset>,
+        used_indices: Option<&[DataSize]>,
+        num_data: DataSize,
+    ) -> Result<()>;
 }
 
 /// Trait for decision tree implementations.

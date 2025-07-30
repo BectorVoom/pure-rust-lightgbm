@@ -17,84 +17,84 @@ pub enum LightGBMError {
     #[error("Configuration error: {message}")]
     Config {
         /// Error message describing the configuration issue
-        message: String
+        message: String,
     },
 
     /// Dataset-related errors
     #[error("Dataset error: {message}")]
     Dataset {
         /// Error message describing the dataset issue
-        message: String
+        message: String,
     },
 
     /// Data dimension mismatch errors
     #[error("Data dimension mismatch: {message}")]
     DataDimensionMismatch {
         /// Error message describing the dimension mismatch
-        message: String
+        message: String,
     },
 
     /// Data loading and parsing errors
     #[error("Data loading error: {message}")]
     DataLoading {
         /// Error message describing the data loading issue
-        message: String
+        message: String,
     },
 
     /// Feature processing errors
     #[error("Feature processing error: {message}")]
     FeatureProcessing {
         /// Error message describing the feature processing issue
-        message: String
+        message: String,
     },
 
     /// Training-related errors
     #[error("Training error: {message}")]
     Training {
         /// Error message describing the training issue
-        message: String
+        message: String,
     },
 
     /// Tree construction errors
     #[error("Tree construction error: {message}")]
     TreeConstruction {
         /// Error message describing the tree construction issue
-        message: String
+        message: String,
     },
 
     /// Prediction errors
     #[error("Prediction error: {message}")]
     Prediction {
         /// Error message describing the prediction issue
-        message: String
+        message: String,
     },
 
     /// GPU/CUDA computation errors
     #[error("GPU computation error: {message}")]
     GPU {
         /// Error message describing the GPU computation issue
-        message: String
+        message: String,
     },
 
     /// Memory allocation and management errors
     #[error("Memory error: {message}")]
     Memory {
         /// Error message describing the memory issue
-        message: String
+        message: String,
     },
 
     /// Numerical computation errors (overflow, underflow, NaN)
     #[error("Numerical error: {message}")]
     Numerical {
         /// Error message describing the numerical computation issue
-        message: String
+        message: String,
     },
 
     /// Model serialization/deserialization errors
     #[error("Serialization error: {message}")]
     Serialization {
         /// Error message describing the serialization issue
-        message: String
+        message: String,
     },
 
     /// File I/O errors
@@ -131,9 +131,9 @@ pub enum LightGBMError {
 
     /// Thread synchronization errors
     #[error("Threading error: {message}")]
-    Threading { 
+    Threading {
         /// Error message describing the threading issue
-        message: String 
+        message: String,
     },
 
     /// Invalid input parameters
@@ -149,41 +149,41 @@ pub enum LightGBMError {
 
     /// Dimension mismatch errors
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
-    DimensionMismatch { 
+    DimensionMismatch {
         /// Expected dimension format
-        expected: String, 
+        expected: String,
         /// Actual dimension format received
-        actual: String 
+        actual: String,
     },
 
     /// Out of bounds access
     #[error("Index out of bounds: index {index}, length {length}")]
-    IndexOutOfBounds { 
+    IndexOutOfBounds {
         /// The index that was accessed
-        index: usize, 
+        index: usize,
         /// The maximum valid length
-        length: usize 
+        length: usize,
     },
 
     /// Early stopping conditions
     #[error("Early stopping triggered: {reason}")]
-    EarlyStopping { 
+    EarlyStopping {
         /// Reason for early stopping
-        reason: String 
+        reason: String,
     },
 
     /// Not implemented functionality
     #[error("Not implemented: {feature}")]
-    NotImplemented { 
+    NotImplemented {
         /// Name of the feature that is not implemented
-        feature: String 
+        feature: String,
     },
 
     /// Internal library errors (should not occur in normal usage)
     #[error("Internal error: {message}")]
-    Internal { 
+    Internal {
         /// Internal error message
-        message: String 
+        message: String,
     },
 }
 
@@ -196,11 +196,11 @@ pub enum DatasetError {
 
     /// Feature count mismatch between expected and actual
     #[error("Feature count mismatch: expected {expected}, got {actual}")]
-    FeatureMismatch { 
+    FeatureMismatch {
         /// Expected number of features
-        expected: usize, 
+        expected: usize,
         /// Actual number of features
-        actual: usize 
+        actual: usize,
     },
 
     /// Invalid feature type detected
@@ -216,9 +216,9 @@ pub enum DatasetError {
 
     /// Missing values are not supported for this feature
     #[error("Missing values not supported for feature {index}")]
-    MissingValuesNotSupported { 
+    MissingValuesNotSupported {
         /// Index of the feature that has unsupported missing values
-        index: usize 
+        index: usize,
     },
 
     /// Categorical feature has too many categories
@@ -234,11 +234,11 @@ pub enum DatasetError {
 
     /// Feature contains an invalid value
     #[error("Feature {index} has invalid value: {value}")]
-    InvalidFeatureValue { 
+    InvalidFeatureValue {
         /// Index of the feature with invalid value
-        index: usize, 
+        index: usize,
         /// The invalid value
-        value: f64 
+        value: f64,
     },
 }
 
@@ -247,18 +247,18 @@ pub enum DatasetError {
 pub enum TrainingError {
     /// Training failed to converge within the maximum iterations
     #[error("Convergence failed after {iterations} iterations")]
-    ConvergenceFailed { 
+    ConvergenceFailed {
         /// Number of iterations attempted before failure
-        iterations: usize 
+        iterations: usize,
     },
 
     /// Insufficient data provided for training
     #[error("Insufficient data: need at least {required} samples, got {actual}")]
-    InsufficientData { 
+    InsufficientData {
         /// Minimum required number of samples
-        required: usize, 
+        required: usize,
         /// Actual number of samples provided
-        actual: usize 
+        actual: usize,
     },
 
     /// All features have zero importance, cannot continue training
@@ -267,25 +267,25 @@ pub enum TrainingError {
 
     /// Error in gradient computation
     #[error("Gradient computation failed: {reason}")]
-    GradientComputation { 
+    GradientComputation {
         /// Reason for gradient computation failure
-        reason: String 
+        reason: String,
     },
 
     /// Error during tree learning process
     #[error("Tree learning failed at iteration {iteration}: {reason}")]
-    TreeLearning { 
+    TreeLearning {
         /// Iteration at which tree learning failed
-        iteration: usize, 
+        iteration: usize,
         /// Reason for tree learning failure
-        reason: String 
+        reason: String,
     },
 
     /// Error in objective function computation
     #[error("Objective function error: {reason}")]
-    ObjectiveFunction { 
+    ObjectiveFunction {
         /// Reason for objective function error
-        reason: String 
+        reason: String,
     },
 }
 
@@ -298,37 +298,37 @@ pub enum GPUError {
 
     /// CUDA runtime error
     #[error("CUDA error: {code}")]
-    CUDA { 
+    CUDA {
         /// CUDA error code
-        code: i32 
+        code: i32,
     },
 
     /// OpenCL computation error
     #[error("OpenCL error: {message}")]
-    OpenCL { 
+    OpenCL {
         /// OpenCL error message
-        message: String 
+        message: String,
     },
 
     /// GPU memory allocation failed
     #[error("GPU memory allocation failed: requested {size} bytes")]
-    MemoryAllocation { 
+    MemoryAllocation {
         /// Size of memory allocation that failed
-        size: usize 
+        size: usize,
     },
 
     /// GPU kernel execution failed
     #[error("GPU kernel execution failed: {kernel}")]
-    KernelExecution { 
+    KernelExecution {
         /// Name of the kernel that failed
-        kernel: String 
+        kernel: String,
     },
 
     /// GPU memory transfer operation failed
     #[error("GPU memory transfer failed: {direction}")]
-    MemoryTransfer { 
+    MemoryTransfer {
         /// Direction of memory transfer (host-to-device, device-to-host, etc.)
-        direction: String 
+        direction: String,
     },
 }
 
@@ -337,36 +337,36 @@ pub enum GPUError {
 pub enum MemoryError {
     /// Memory allocation failed
     #[error("Allocation failed: requested {size} bytes")]
-    AllocationFailed { 
+    AllocationFailed {
         /// Size of the failed allocation in bytes
-        size: usize 
+        size: usize,
     },
 
     /// Memory alignment constraint violation
     #[error("Alignment constraint violated: address {address:#x}, required alignment {alignment}")]
-    AlignmentViolation { 
+    AlignmentViolation {
         /// Memory address that violates alignment
-        address: usize, 
+        address: usize,
         /// Required memory alignment
-        alignment: usize 
+        alignment: usize,
     },
 
     /// Buffer overflow detected
     #[error("Buffer overflow: capacity {capacity}, attempted write at {offset}")]
-    BufferOverflow { 
+    BufferOverflow {
         /// Buffer capacity
-        capacity: usize, 
+        capacity: usize,
         /// Offset where overflow was attempted
-        offset: usize 
+        offset: usize,
     },
 
     /// System is out of memory
     #[error("Out of memory: available {available} bytes, requested {requested} bytes")]
-    OutOfMemory { 
+    OutOfMemory {
         /// Available memory in bytes
-        available: usize, 
+        available: usize,
         /// Requested memory in bytes
-        requested: usize 
+        requested: usize,
     },
 }
 
@@ -614,7 +614,14 @@ macro_rules! config_error {
     };
 }
 
-/// Macro for creating dataset errors with formatted messages
+/// Convenience macro for creating dataset-related errors
+/// 
+/// # Examples
+/// 
+/// ```
+/// use lightgbm_rust::dataset_error;
+/// let err = dataset_error!("Invalid feature count: {}", 42);
+/// ```
 #[macro_export]
 macro_rules! dataset_error {
     ($msg:expr) => {
@@ -625,7 +632,14 @@ macro_rules! dataset_error {
     };
 }
 
-/// Macro for creating training errors with formatted messages
+/// Convenience macro for creating training-related errors
+/// 
+/// # Examples
+/// 
+/// ```
+/// use lightgbm_rust::training_error;
+/// let err = training_error!("Training failed: {}", "convergence timeout");
+/// ```
 #[macro_export]
 macro_rules! training_error {
     ($msg:expr) => {
@@ -636,7 +650,20 @@ macro_rules! training_error {
     };
 }
 
-/// Macro for conditional error handling - returns an error if condition is false
+/// Convenience macro for conditional error checking
+/// 
+/// Similar to `assert!` but returns an error instead of panicking.
+/// 
+/// # Examples
+/// 
+/// ```
+/// use lightgbm_rust::{ensure, dataset_error};
+/// 
+/// fn check_positive(x: i32) -> Result<(), lightgbm_rust::LightGBMError> {
+///     ensure!(x > 0, dataset_error!("Value must be positive"));
+///     Ok(())
+/// }
+/// ```
 #[macro_export]
 macro_rules! ensure {
     ($cond:expr, $err:expr) => {

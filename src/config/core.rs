@@ -6,7 +6,9 @@
 
 use crate::core::constants::*;
 use crate::core::error::{LightGBMError, Result};
+
 use crate::core::types::*;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -53,12 +55,26 @@ pub struct Config {
     pub feature_fraction: f64,
     /// Fraction of features to use for each node
     pub feature_fraction_bynode: f64,
+    /// Random seed for feature sampling
+    pub feature_fraction_seed: u64,
     /// Fraction of data to use for bagging
     pub bagging_fraction: f64,
     /// Frequency of bagging (0 = disabled)
     pub bagging_freq: usize,
     /// Random seed for bagging
     pub bagging_seed: u64,
+    /// Fraction of positive samples to use for bagging
+    pub pos_bagging_fraction: f64,
+    /// Fraction of negative samples to use for bagging
+    pub neg_bagging_fraction: f64,
+    /// Whether to use query-based bagging for ranking tasks
+    pub bagging_by_query: bool,
+    /// Data sampling strategy (bagging, goss, etc.)
+    pub data_sample_strategy: String,
+    /// Top rate for GOSS sampling (fraction of large gradient data to keep)
+    pub top_rate: f64,
+    /// Other rate for GOSS sampling (fraction of small gradient data to keep)
+    pub other_rate: f64,
 
     // Feature parameters
     /// Maximum number of bins for feature discretization
@@ -200,9 +216,16 @@ impl Default for Config {
             // Sampling parameters
             feature_fraction: DEFAULT_FEATURE_FRACTION,
             feature_fraction_bynode: 1.0,
+            feature_fraction_seed: DEFAULT_RANDOM_SEED,
             bagging_fraction: DEFAULT_BAGGING_FRACTION,
             bagging_freq: DEFAULT_BAGGING_FREQ,
             bagging_seed: DEFAULT_RANDOM_SEED,
+            pos_bagging_fraction: 1.0,
+            neg_bagging_fraction: 1.0,
+            bagging_by_query: false,
+            data_sample_strategy: "bagging".to_string(),
+            top_rate: 0.2,
+            other_rate: 0.1,
 
             // Feature parameters
             max_bin: DEFAULT_MAX_BIN,
@@ -595,9 +618,13 @@ impl Config {
 
         self.feature_fraction = other.feature_fraction;
         self.feature_fraction_bynode = other.feature_fraction_bynode;
+        self.feature_fraction_seed = other.feature_fraction_seed;
         self.bagging_fraction = other.bagging_fraction;
         self.bagging_freq = other.bagging_freq;
         self.bagging_seed = other.bagging_seed;
+        self.pos_bagging_fraction = other.pos_bagging_fraction;
+        self.neg_bagging_fraction = other.neg_bagging_fraction;
+        self.bagging_by_query = other.bagging_by_query;
 
         self.max_bin = other.max_bin;
         self.min_data_per_group = other.min_data_per_group;
@@ -720,6 +747,18 @@ impl Config {
             self.bagging_fraction.to_string(),
         );
         map.insert("bagging_freq".to_string(), self.bagging_freq.to_string());
+        map.insert(
+            "pos_bagging_fraction".to_string(),
+            self.pos_bagging_fraction.to_string(),
+        );
+        map.insert(
+            "neg_bagging_fraction".to_string(),
+            self.neg_bagging_fraction.to_string(),
+        );
+        map.insert(
+            "bagging_by_query".to_string(),
+            self.bagging_by_query.to_string(),
+        );
 
         map.insert("max_bin".to_string(), self.max_bin.to_string());
         map.insert("device_type".to_string(), self.device_type.to_string());
@@ -863,6 +902,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set bagging seed
+    pub fn bagging_seed(mut self, seed: u64) -> Self {
+        self.config.bagging_seed = seed;
+        self
+    }
+
     /// Set maximum number of bins
     pub fn max_bin(mut self, max_bin: usize) -> Self {
         if max_bin < 2 {
@@ -910,8 +955,34 @@ impl ConfigBuilder {
         self.config.verbosity = if verbose {
             VerbosityLevel::Info
         } else {
-            VerbosityLevel::SILENT
+            VerbosityLevel::Silent
         };
+        self
+    }
+
+    /// Set data sample strategy
+    pub fn data_sample_strategy(mut self, strategy: String) -> Self {
+        self.config.data_sample_strategy = strategy;
+        self
+    }
+
+    /// Set GOSS top rate
+    pub fn top_rate(mut self, rate: f64) -> Self {
+        if rate <= 0.0 || rate > 1.0 {
+            self.validation_errors
+                .push("top_rate must be in range (0.0, 1.0]".to_string());
+        }
+        self.config.top_rate = rate;
+        self
+    }
+
+    /// Set GOSS other rate
+    pub fn other_rate(mut self, rate: f64) -> Self {
+        if rate <= 0.0 || rate > 1.0 {
+            self.validation_errors
+                .push("other_rate must be in range (0.0, 1.0]".to_string());
+        }
+        self.config.other_rate = rate;
         self
     }
 
@@ -971,21 +1042,21 @@ pub enum ConfigError {
     },
     /// Required configuration parameter is missing
     #[error("Missing required parameter: {parameter}")]
-    MissingParameter { 
+    MissingParameter {
         /// Name of the missing parameter
-        parameter: String 
+        parameter: String,
     },
     /// Configuration file processing error
     #[error("Configuration file error: {message}")]
-    FileError { 
+    FileError {
         /// Error message describing the file issue
-        message: String 
+        message: String,
     },
     /// Configuration serialization/deserialization error
     #[error("Serialization error: {message}")]
-    SerializationError { 
+    SerializationError {
         /// Error message describing the serialization issue
-        message: String 
+        message: String,
     },
 }
 

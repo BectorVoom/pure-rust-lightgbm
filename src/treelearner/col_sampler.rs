@@ -5,15 +5,17 @@
 //! for interaction constraints.
 
 use crate::config::Config;
-use crate::dataset::Dataset;
 use crate::core::error::{LightGBMError, Result};
+use crate::dataset::Dataset;
 use crate::io::tree::Tree;
-use std::collections::HashSet;
-use rand::SeedableRng;
-use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 /// Random number generator wrapper for reproducible sampling
+#[derive(Debug)]
 pub struct Random {
     rng: StdRng,
 }
@@ -42,9 +44,10 @@ impl Random {
 }
 
 /// Column sampler for feature selection in tree learning
+#[derive(Debug)]
 pub struct ColSampler {
     /// Training dataset reference
-    train_data: Option<*const Dataset>,
+    train_data: Option<Arc<Dataset>>,
     /// Fraction of features to use per tree
     fraction_bytree: f64,
     /// Fraction of features to use per node
@@ -70,10 +73,16 @@ pub struct ColSampler {
 impl ColSampler {
     /// Create a new ColSampler from configuration
     pub fn new(config: &Config) -> Self {
-        let interaction_constraints = Vec::new();
-        // Note: interaction_constraints_vector equivalent would need to be added to Config
-        // For now, leaving empty as in the C++ default constructor
-        
+        let interaction_constraints = if let Some(ref constraints) = config.interaction_constraints
+        {
+            constraints
+                .iter()
+                .map(|constraint| constraint.iter().map(|&x| x as i32).collect())
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         Self {
             train_data: None,
             fraction_bytree: config.feature_fraction,
@@ -98,7 +107,7 @@ impl ColSampler {
 
     /// Set the training data for the sampler
     pub fn set_training_data(&mut self, train_data: &Dataset) -> Result<()> {
-        self.train_data = Some(train_data as *const Dataset);
+        self.train_data = Some(Arc::new(train_data.clone()));
         self.is_feature_used.resize(train_data.num_features(), 1);
         self.valid_feature_indices = train_data.valid_feature_indices();
 
@@ -107,7 +116,8 @@ impl ColSampler {
             self.used_cnt_bytree = self.valid_feature_indices.len() as i32;
         } else {
             self.need_reset_bytree = true;
-            self.used_cnt_bytree = Self::get_cnt(self.valid_feature_indices.len(), self.fraction_bytree);
+            self.used_cnt_bytree =
+                Self::get_cnt(self.valid_feature_indices.len(), self.fraction_bytree);
         }
 
         self.reset_by_tree()?;
@@ -118,6 +128,17 @@ impl ColSampler {
     pub fn set_config(&mut self, config: &Config) -> Result<()> {
         self.fraction_bytree = config.feature_fraction;
         self.fraction_bynode = config.feature_fraction_bynode;
+
+        // Update interaction constraints
+        self.interaction_constraints = if let Some(ref constraints) = config.interaction_constraints
+        {
+            constraints
+                .iter()
+                .map(|constraint| constraint.iter().map(|&x| x as i32).collect())
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         if let Some(train_data) = self.get_train_data() {
             self.is_feature_used.resize(train_data.num_features(), 1);
@@ -134,7 +155,8 @@ impl ColSampler {
             self.used_cnt_bytree = self.valid_feature_indices.len() as i32;
         } else {
             self.need_reset_bytree = true;
-            self.used_cnt_bytree = Self::get_cnt(self.valid_feature_indices.len(), self.fraction_bytree);
+            self.used_cnt_bytree =
+                Self::get_cnt(self.valid_feature_indices.len(), self.fraction_bytree);
         }
 
         self.reset_by_tree()?;
@@ -150,17 +172,19 @@ impl ColSampler {
             // Sample features for this tree
             self.used_feature_indices = self.random.sample(
                 self.valid_feature_indices.len() as i32,
-                self.used_cnt_bytree
+                self.used_cnt_bytree,
             );
 
             // Get train data info we need
-            let train_data_ptr = self.train_data
+            let train_data = self
+                .train_data
+                .as_ref()
                 .ok_or_else(|| LightGBMError::dataset("Training data not set"))?;
-            
+
             // Set selected features as used
             for &idx in &self.used_feature_indices {
                 let used_feature = self.valid_feature_indices[idx as usize];
-                let inner_feature_index = unsafe { (*train_data_ptr).inner_feature_index(used_feature) };
+                let inner_feature_index = train_data.inner_feature_index(used_feature);
                 if inner_feature_index >= 0 {
                     self.is_feature_used[inner_feature_index as usize] = 1;
                 }
@@ -171,10 +195,12 @@ impl ColSampler {
 
     /// Get feature usage mask for a specific node
     pub fn get_by_node(&mut self, tree: Option<&Tree>, leaf: i32) -> Result<Vec<i8>> {
-        let train_data_ptr = self.train_data
+        let train_data_ptr = self
+            .train_data
+            .as_ref()
             .ok_or_else(|| LightGBMError::dataset("Training data not set"))?;
-        
-        let num_features = unsafe { (*train_data_ptr).num_features() };
+
+        let num_features = (*train_data_ptr).num_features();
 
         // Get interaction constraints for current branch
         let mut allowed_features = HashSet::new();
@@ -184,7 +210,7 @@ impl ColSampler {
             } else {
                 Vec::new()
             };
-            
+
             allowed_features.extend(branch_features.iter());
 
             for constraint in &self.interaction_constraints {
@@ -212,7 +238,7 @@ impl ColSampler {
                 return Ok(vec![1i8; num_features]);
             } else {
                 for &feat in &allowed_features {
-                    let inner_feat = unsafe { (*train_data_ptr).inner_feature_index(feat) };
+                    let inner_feat = (*train_data_ptr).inner_feature_index(feat);
                     if inner_feat >= 0 {
                         ret[inner_feat as usize] = 1;
                     }
@@ -222,59 +248,66 @@ impl ColSampler {
         }
 
         if self.need_reset_bytree {
-            let mut used_feature_cnt = Self::get_cnt(self.used_feature_indices.len(), self.fraction_bynode);
+            let mut used_feature_cnt =
+                Self::get_cnt(self.used_feature_indices.len(), self.fraction_bynode);
             let allowed_used_feature_indices: &Vec<i32>;
             let filtered_feature_indices: Vec<i32>;
 
             if self.interaction_constraints.is_empty() {
                 allowed_used_feature_indices = &self.used_feature_indices;
             } else {
-                filtered_feature_indices = self.used_feature_indices
+                filtered_feature_indices = self
+                    .used_feature_indices
                     .iter()
-                    .filter(|&&feat_ind| allowed_features.contains(&self.valid_feature_indices[feat_ind as usize]))
+                    .filter(|&&feat_ind| {
+                        allowed_features.contains(&self.valid_feature_indices[feat_ind as usize])
+                    })
                     .copied()
                     .collect();
-                used_feature_cnt = std::cmp::min(used_feature_cnt, filtered_feature_indices.len() as i32);
+                used_feature_cnt =
+                    std::cmp::min(used_feature_cnt, filtered_feature_indices.len() as i32);
                 allowed_used_feature_indices = &filtered_feature_indices;
             }
 
-            let sampled_indices = self.random.sample(
-                allowed_used_feature_indices.len() as i32,
-                used_feature_cnt
-            );
+            let sampled_indices = self
+                .random
+                .sample(allowed_used_feature_indices.len() as i32, used_feature_cnt);
 
             for &i in &sampled_indices {
-                let used_feature = self.valid_feature_indices[allowed_used_feature_indices[i as usize] as usize];
-                let inner_feature_index = unsafe { (*train_data_ptr).inner_feature_index(used_feature) };
+                let used_feature =
+                    self.valid_feature_indices[allowed_used_feature_indices[i as usize] as usize];
+                let inner_feature_index = (*train_data_ptr).inner_feature_index(used_feature);
                 if inner_feature_index >= 0 {
                     ret[inner_feature_index as usize] = 1;
                 }
             }
         } else {
-            let mut used_feature_cnt = Self::get_cnt(self.valid_feature_indices.len(), self.fraction_bynode);
+            let mut used_feature_cnt =
+                Self::get_cnt(self.valid_feature_indices.len(), self.fraction_bynode);
             let allowed_valid_feature_indices: &Vec<i32>;
             let filtered_feature_indices: Vec<i32>;
 
             if self.interaction_constraints.is_empty() {
                 allowed_valid_feature_indices = &self.valid_feature_indices;
             } else {
-                filtered_feature_indices = self.valid_feature_indices
+                filtered_feature_indices = self
+                    .valid_feature_indices
                     .iter()
                     .filter(|&&feat| allowed_features.contains(&feat))
                     .copied()
                     .collect();
                 allowed_valid_feature_indices = &filtered_feature_indices;
-                used_feature_cnt = std::cmp::min(used_feature_cnt, filtered_feature_indices.len() as i32);
+                used_feature_cnt =
+                    std::cmp::min(used_feature_cnt, filtered_feature_indices.len() as i32);
             }
 
-            let sampled_indices = self.random.sample(
-                allowed_valid_feature_indices.len() as i32,
-                used_feature_cnt
-            );
+            let sampled_indices = self
+                .random
+                .sample(allowed_valid_feature_indices.len() as i32, used_feature_cnt);
 
             for &i in &sampled_indices {
                 let used_feature = allowed_valid_feature_indices[i as usize];
-                let inner_feature_index = unsafe { (*train_data_ptr).inner_feature_index(used_feature) };
+                let inner_feature_index = (*train_data_ptr).inner_feature_index(used_feature);
                 if inner_feature_index >= 0 {
                     ret[inner_feature_index as usize] = 1;
                 }
@@ -285,7 +318,7 @@ impl ColSampler {
     }
 
     /// Get feature usage flags for tree-level sampling
-    pub fn is_feature_used_bytree(&self) -> &Vec<i8> {
+    pub fn is_feature_used_bytree(&self) -> &[i8] {
         &self.is_feature_used
     }
 
@@ -296,9 +329,18 @@ impl ColSampler {
         }
     }
 
-    /// Get training data reference (unsafe, for internal use only)
+    /// Get training data reference
     fn get_train_data(&self) -> Option<&Dataset> {
-        self.train_data.map(|ptr| unsafe { &*ptr })
+        self.train_data.as_ref().map(|arc| arc.as_ref())
+    }
+
+    /// Check if a feature is used by the current tree
+    pub fn is_feature_used_by_tree(&self, feature_index: usize) -> bool {
+        if feature_index < self.is_feature_used.len() {
+            self.is_feature_used[feature_index] != 0
+        } else {
+            false
+        }
     }
 }
 
