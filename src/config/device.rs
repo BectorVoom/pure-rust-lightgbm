@@ -696,6 +696,11 @@ mod tests {
         // At least SSE2 should be available on x86_64
         #[cfg(target_arch = "x86_64")]
         assert!(extensions.sse2);
+        
+        // TODO: Add architecture-specific tests for ARM64 NEON and other architectures
+        // For now, just verify that detection runs without panic on all architectures
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = extensions; // Prevent unused variable warning on non-x86_64
     }
 
     #[test]

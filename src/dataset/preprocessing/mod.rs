@@ -182,6 +182,7 @@ impl Default for ValidationConfig {
 }
 
 /// Data preprocessor
+#[derive(Debug)]
 pub struct Preprocessor {
     /// Configuration
     config: PreprocessorConfig,
@@ -224,12 +225,21 @@ pub struct ScalingParams {
 /// Preprocessor error type
 #[derive(Debug, thiserror::Error)]
 pub enum PreprocessorError {
+    /// Preprocessor has not been fitted on training data
     #[error("Preprocessor not fitted")]
     NotFitted,
+    /// Invalid feature index provided
     #[error("Invalid feature index: {0}")]
     InvalidFeatureIndex(usize),
+    /// Data dimension mismatch between expected and actual
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
-    DimensionMismatch { expected: usize, actual: usize },
+    DimensionMismatch {
+        /// Expected number of dimensions
+        expected: usize,
+        /// Actual number of dimensions
+        actual: usize,
+    },
+    /// General preprocessing error
     #[error("Preprocessing error: {0}")]
     Processing(String),
 }
@@ -790,7 +800,7 @@ pub mod utils {
 
     /// Detect missing values in dataset
     pub fn detect_missing_values(_dataset: &Dataset) -> Result<Array2<bool>> {
-        // TODO: Implement missing value detection
+        // TODO: Implement missing value detection (issue #69)
         Err(LightGBMError::not_implemented("Missing value detection"))
     }
 
@@ -814,7 +824,7 @@ pub mod utils {
         _strategy: ImputationStrategy,
         _fill_value: Option<f32>,
     ) -> Result<()> {
-        // TODO: Implement missing value imputation
+        // TODO: Implement missing value imputation (issue #69)
         Err(LightGBMError::not_implemented("Missing value imputation"))
     }
 }

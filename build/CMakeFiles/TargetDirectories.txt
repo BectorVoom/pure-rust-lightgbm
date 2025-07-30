@@ -1,0 +1,5 @@
+/Users/ods/Documents/LightGBM-master/pure_rust_lightgbm/build/CMakeFiles/test_cpp_tree.dir
+/Users/ods/Documents/LightGBM-master/pure_rust_lightgbm/build/CMakeFiles/run_cpp_tree_test.dir
+/Users/ods/Documents/LightGBM-master/pure_rust_lightgbm/build/CMakeFiles/test.dir
+/Users/ods/Documents/LightGBM-master/pure_rust_lightgbm/build/CMakeFiles/edit_cache.dir
+/Users/ods/Documents/LightGBM-master/pure_rust_lightgbm/build/CMakeFiles/rebuild_cache.dir

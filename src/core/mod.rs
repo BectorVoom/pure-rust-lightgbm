@@ -27,10 +27,10 @@
 //!     memory::AlignedBuffer,
 //!     traits::ObjectiveFunction,
 //! };
-//! 
+//!
 //! // Create an aligned buffer for SIMD operations
 //! let mut buffer: AlignedBuffer<f32> = AlignedBuffer::new(1000)?;
-//! 
+//!
 //! // Work with fundamental types
 //! let learning_rate = DEFAULT_LEARNING_RATE;
 //! let objective = ObjectiveType::Regression;
@@ -38,19 +38,34 @@
 //! ```
 
 // Public module declarations
+pub mod bin;
+pub mod config;
 pub mod constants;
 pub mod error;
-pub mod memory;
-pub mod traits;
-pub mod types;
+pub mod feature_group;
 
+pub mod gpu;
+
+pub mod memory;
+pub mod network;
+pub mod prediction_early_stop;
+pub mod sample_strategy;
+/// Training share states module
+pub mod train_share_states;
+pub mod traits;
+pub mod tree_learner;
+pub mod types;
+/// Utilities module
+pub mod utils;
 // Re-export commonly used items for convenience
 pub use constants::*;
 pub use error::{LightGBMError, Result};
 pub use memory::{AlignedBuffer, MemoryPool, MemoryStats};
+pub mod meta;
 pub use traits::*;
 pub use types::*;
-
+/// Dataset module
+pub mod dataset;
 /// Version information for the core module
 pub const CORE_MODULE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -102,7 +117,7 @@ impl CoreCapabilities {
     /// Get a summary of available capabilities
     pub fn summary(&self) -> String {
         let mut features = Vec::new();
-        
+
         if self.simd_aligned_memory {
             features.push("SIMD Memory");
         }
@@ -127,6 +142,7 @@ impl CoreCapabilities {
 }
 
 /// Core module initialization and configuration
+#[derive(Debug)]
 pub struct CoreModule {
     capabilities: CoreCapabilities,
     initialized: bool,
@@ -150,7 +166,7 @@ impl CoreModule {
         // Verify memory alignment capabilities
         if !self.verify_memory_alignment() {
             return Err(LightGBMError::internal(
-                "SIMD memory alignment verification failed"
+                "SIMD memory alignment verification failed",
             ));
         }
 
@@ -159,9 +175,7 @@ impl CoreModule {
 
         // Verify thread safety
         if !self.verify_thread_safety() {
-            return Err(LightGBMError::internal(
-                "Thread safety verification failed"
-            ));
+            return Err(LightGBMError::internal("Thread safety verification failed"));
         }
 
         self.initialized = true;
@@ -197,7 +211,7 @@ impl CoreModule {
         if std::env::var("RUST_LOG").is_err() {
             std::env::set_var("RUST_LOG", "info");
         }
-        
+
         // Try to initialize env_logger, ignore if already initialized
         let _ = env_logger::try_init();
     }
@@ -292,10 +306,8 @@ static CORE_INIT: std::sync::Once = std::sync::Once::new();
 
 /// Initialize the global core module
 pub fn initialize_core() -> Result<()> {
-    CORE_INIT.call_once(|| {
-        unsafe {
-            CORE_MODULE = Some(CoreModule::new());
-        }
+    CORE_INIT.call_once(|| unsafe {
+        CORE_MODULE = Some(CoreModule::new());
     });
 
     unsafe {
@@ -310,7 +322,8 @@ pub fn initialize_core() -> Result<()> {
 /// Check if the core module is initialized
 pub fn is_core_initialized() -> bool {
     unsafe {
-        CORE_MODULE.as_ref()
+        CORE_MODULE
+            .as_ref()
             .map(|core| core.is_initialized())
             .unwrap_or(false)
     }
@@ -319,7 +332,8 @@ pub fn is_core_initialized() -> bool {
 /// Get current core capabilities
 pub fn core_capabilities() -> CoreCapabilities {
     unsafe {
-        CORE_MODULE.as_ref()
+        CORE_MODULE
+            .as_ref()
             .map(|core| core.capabilities().clone())
             .unwrap_or_default()
     }
@@ -361,7 +375,7 @@ mod tests {
         assert!(caps.rich_error_types);
         assert!(caps.trait_abstractions);
         assert!(caps.serialization);
-        
+
         let summary = caps.summary();
         assert!(summary.contains("Core capabilities"));
     }
@@ -371,7 +385,7 @@ mod tests {
         // Test global initialization
         assert!(initialize_core().is_ok());
         assert!(is_core_initialized());
-        
+
         let caps = core_capabilities();
         assert!(caps.simd_aligned_memory);
     }

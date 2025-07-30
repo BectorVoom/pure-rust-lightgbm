@@ -4,7 +4,7 @@
 //! collections of decision trees and computing ensemble predictions.
 
 use crate::core::types::{IterationIndex, Score};
-use crate::tree::tree::Tree;
+use crate::io::tree::Tree;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};

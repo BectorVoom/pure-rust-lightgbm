@@ -367,7 +367,10 @@ mod tests {
     fn test_metric_type_display() {
         assert_eq!(MetricType::MAE.to_string(), "mae");
         assert_eq!(MetricType::MSE.to_string(), "mse");
-        assert_eq!(MetricType::Custom("my_metric".to_string()).to_string(), "my_metric");
+        assert_eq!(
+            MetricType::Custom("my_metric".to_string()).to_string(),
+            "my_metric"
+        );
     }
 
     #[test]

@@ -6,9 +6,9 @@
 use crate::core::error::{LightGBMError, Result};
 use crate::dataset::Dataset;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Axis};
+use polars::datatypes::PlSmallStr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
 /// Missing value imputation strategies
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImputationStrategy {
@@ -153,6 +153,7 @@ pub struct KNNModel {
 }
 
 /// Missing value imputer
+#[derive(Debug)]
 pub struct MissingValueImputer {
     /// Configuration
     config: MissingValueConfig,
@@ -936,14 +937,14 @@ impl MissingValueImputer {
         &self,
         dataset: &Dataset,
         fitted_params: &ImputationParameters,
-    ) -> Result<Vec<String>> {
-        let default_names = (0..dataset.num_features())
-            .map(|i| format!("feature_{}", i))
-            .collect::<Vec<_>>();
-        let original_names = dataset.feature_names().unwrap_or(&default_names);
+    ) -> Result<Vec<PlSmallStr>> {
+        let _default_names: Vec<PlSmallStr> = (0..dataset.num_features())
+            .map(|i| format!("feature_{}", i).into())
+            .collect();
+        let original_names = dataset.feature_names().unwrap_or(&[]);
 
         // Remove high missing features
-        let mut new_names = Vec::new();
+        let mut new_names: Vec<PlSmallStr> = Vec::new();
         for (idx, name) in original_names.iter().enumerate() {
             if !fitted_params.removed_features.contains(&idx) {
                 new_names.push(name.clone());
@@ -952,9 +953,8 @@ impl MissingValueImputer {
 
         // Add missing indicator names if configured
         if self.config.create_missing_indicators {
-            let indicator_names: Vec<String> = new_names
-                .iter()
-                .map(|name| format!("{}_missing_indicator", name))
+            let indicator_names: Vec<PlSmallStr> = new_names.iter()
+                .map(|name| format!("{}_missing", name.as_str()).into())
                 .collect();
             new_names.extend(indicator_names);
         }
@@ -966,7 +966,6 @@ impl MissingValueImputer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::Array2;
 
     #[test]
     fn test_missing_value_config_default() {

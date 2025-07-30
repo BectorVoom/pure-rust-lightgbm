@@ -151,8 +151,14 @@ pub const DEFAULT_PREDICTION_BUFFER_SIZE: usize = 10000;
 
 /// Version information.
 pub const LIGHTGBM_RUST_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Major version number of the LightGBM Rust implementation.
 pub const LIGHTGBM_RUST_VERSION_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
+
+/// Minor version number of the LightGBM Rust implementation.
 pub const LIGHTGBM_RUST_VERSION_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
+
+/// Patch version number of the LightGBM Rust implementation.
 pub const LIGHTGBM_RUST_VERSION_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
 /// Compile-time assertions to verify type sizes and alignments.

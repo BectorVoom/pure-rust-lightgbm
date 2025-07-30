@@ -110,10 +110,7 @@ lightgbm-rust/
 │   │   ├── dataset.rs         # Core Dataset structure
 │   │   ├── loader/            # Data loading utilities
 │   │   │   ├── mod.rs         # Loader module exports
-│   │   │   ├── csv.rs         # CSV file loading
-│   │   │   ├── polars.rs      # Polars DataFrame integration
-│   │   │   ├── arrow.rs       # Apache Arrow support
-│   │   │   └── parquet.rs     # Parquet file support
+│   │   │   ├── loader.rs      # Polars DataFrame integration and load parquet,csv,mmap format file
 │   │   ├── binning/           # Feature binning system
 │   │   │   ├── mod.rs         # Binning module exports
 │   │   │   ├── mapper.rs      # Bin mapping functionality
@@ -360,7 +357,7 @@ pub struct Dataset {
     /// Number of features
     num_features: usize,
     /// Feature names for interpretability
-    feature_names: Option<Vec<String>>,
+    feature_names: Option<Vec<PlSmallStr>>,
     /// Feature binning information
     bin_mappers: Vec<BinMapper>,
     /// Missing value indicators

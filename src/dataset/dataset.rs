@@ -8,6 +8,7 @@ use crate::core::types::*;
 
 use crate::dataset::binning::BinMapper;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use polars::prelude::PlSmallStr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,7 +29,7 @@ pub struct Dataset {
     /// Number of features
     num_features: usize,
     /// Feature names for interpretability
-    feature_names: Option<Vec<String>>,
+    feature_names: Option<Vec<PlSmallStr>>,
     /// Feature types (numerical or categorical)
     feature_types: Vec<FeatureType>,
     /// Feature binning information
@@ -94,7 +95,7 @@ pub struct DatasetInfo {
     /// Sparsity ratio
     pub sparsity: f64,
     /// Feature names
-    pub feature_names: Option<Vec<String>>,
+    pub feature_names: Option<Vec<PlSmallStr>>,
 }
 
 impl Dataset {
@@ -104,7 +105,7 @@ impl Dataset {
         labels: Array1<f32>,
         weights: Option<Array1<f32>>,
         groups: Option<Array1<DataSize>>,
-        feature_names: Option<Vec<String>>,
+        feature_names: Option<Vec<PlSmallStr>>,
         feature_types: Option<Vec<FeatureType>>,
     ) -> Result<Self> {
         let num_data = features.nrows() as DataSize;
@@ -215,7 +216,8 @@ impl Dataset {
 
     /// Get a single label at the specified index
     pub fn label(&self, index: usize) -> Result<f32> {
-        self.labels.get(index)
+        self.labels
+            .get(index)
             .copied()
             .ok_or_else(|| LightGBMError::dataset(format!("Label index {} out of bounds", index)))
     }
@@ -248,7 +250,7 @@ impl Dataset {
             num_features: self.num_features(),
             num_classes: self.detect_num_classes(),
             feature_stats: Vec::new(), // TODO: Implement detailed feature stats if needed
-            missing_counts: Vec::new(), // TODO: Implement missing counts if needed  
+            missing_counts: Vec::new(), // TODO: Implement missing counts if needed
             memory_usage: self.memory_usage(),
             sparsity: self.calculate_sparsity(),
         }
@@ -260,7 +262,7 @@ impl Dataset {
     }
 
     /// Get feature names
-    pub fn feature_names(&self) -> Option<&[String]> {
+    pub fn feature_names(&self) -> Option<&[PlSmallStr]> {
         self.feature_names.as_deref()
     }
 
@@ -545,15 +547,47 @@ impl Dataset {
 
         usage
     }
+
+    /// Get number of queries (for ranking datasets)
+    pub fn num_queries(&self) -> Option<DataSize> {
+        self.groups.as_ref().map(|g| g.len() as DataSize)
+    }
+
+    /// Get query boundaries (for ranking datasets)
+    pub fn query_boundaries(&self) -> Option<&[DataSize]> {
+        self.groups.as_ref().map(|g| g.as_slice().unwrap())
+    }
+
+    /// Get number of feature groups (placeholder implementation)
+    pub fn num_feature_groups(&self) -> usize {
+        // For now, assume each feature is its own group
+        // This would be properly implemented based on feature binning/grouping strategy
+        self.num_features
+    }
+
+    /// Get valid feature indices (all features are considered valid for now)
+    pub fn valid_feature_indices(&self) -> Vec<i32> {
+        (0..self.num_features as i32).collect()
+    }
+
+    /// Get inner feature index from feature index (for now, they are the same)
+    pub fn inner_feature_index(&self, feature_index: i32) -> i32 {
+        if feature_index >= 0 && (feature_index as usize) < self.num_features {
+            feature_index
+        } else {
+            -1
+        }
+    }
 }
 
 /// Dataset builder for constructing datasets with validation
+#[derive(Debug)]
 pub struct DatasetBuilder {
     features: Option<Array2<f32>>,
     labels: Option<Array1<f32>>,
     weights: Option<Array1<f32>>,
     groups: Option<Array1<DataSize>>,
-    feature_names: Option<Vec<String>>,
+    feature_names: Option<Vec<PlSmallStr>>,
     feature_types: Option<Vec<FeatureType>>,
     metadata: DatasetMetadata,
 }
@@ -597,7 +631,7 @@ impl DatasetBuilder {
     }
 
     /// Set feature names
-    pub fn feature_names(mut self, names: Vec<String>) -> Self {
+    pub fn feature_names(mut self, names: Vec<PlSmallStr>) -> Self {
         self.feature_names = Some(names);
         self
     }
@@ -645,18 +679,23 @@ impl Default for DatasetBuilder {
     }
 }
 
-// Thread-safe dataset wrapper
+/// Thread-safe dataset wrapper for concurrent access
+///
+/// Provides safe concurrent access to a dataset by wrapping it in an Arc.
+#[derive(Debug)]
 pub struct ThreadSafeDataset {
     dataset: Arc<Dataset>,
 }
 
 impl ThreadSafeDataset {
+    /// Create a new thread-safe dataset wrapper
     pub fn new(dataset: Dataset) -> Self {
         ThreadSafeDataset {
             dataset: Arc::new(dataset),
         }
     }
 
+    /// Get a reference to the underlying dataset
     pub fn dataset(&self) -> &Dataset {
         &self.dataset
     }
@@ -698,7 +737,7 @@ mod tests {
     fn test_dataset_builder() {
         let features = Array2::from_shape_vec((2, 2), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
         let labels = Array1::from_vec(vec![0.0, 1.0]);
-        let feature_names = vec!["feature1".to_string(), "feature2".to_string()];
+        let feature_names = vec!["feature1".into(), "feature2".into()];
 
         let dataset = Dataset::builder()
             .features(features)
@@ -717,12 +756,13 @@ mod tests {
     fn test_dataset_validation() {
         // Create dataset with 10 samples to meet validation requirements
         let features = Array2::from_shape_vec(
-            (10, 2), 
+            (10, 2),
             vec![
-                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
-                11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0
-            ]
-        ).unwrap();
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+                16.0, 17.0, 18.0, 19.0, 20.0,
+            ],
+        )
+        .unwrap();
         let labels = Array1::from_vec(vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]);
 
         let dataset = Dataset::new(features, labels, None, None, None, None).unwrap();

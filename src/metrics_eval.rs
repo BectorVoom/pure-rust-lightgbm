@@ -53,6 +53,12 @@ pub struct MulticlassMetrics {
     pub per_class_recall: Vec<f64>,
     /// Per-class F1-score
     pub per_class_f1: Vec<f64>,
+    /// Multiclass log-loss (cross-entropy loss)
+    pub log_loss: f64,
+    /// Per-class AUC-ROC scores (one-vs-rest)
+    pub per_class_auc: Vec<f64>,
+    /// Macro-averaged AUC
+    pub macro_auc: f64,
 }
 
 /// Evaluate regression metrics
@@ -226,6 +232,11 @@ pub fn evaluate_multiclass_classification(
         weighted_f1 += per_class_f1[class] * weight;
     }
     
+    // Calculate probability-based metrics using prob_predictions
+    let log_loss = calculate_multiclass_log_loss(prob_predictions, true_labels, num_classes);
+    let per_class_auc = calculate_multiclass_auc(prob_predictions, true_labels, num_classes);
+    let macro_auc = per_class_auc.iter().sum::<f64>() / num_classes as f64;
+    
     MulticlassMetrics {
         accuracy,
         macro_f1,
@@ -233,6 +244,9 @@ pub fn evaluate_multiclass_classification(
         per_class_precision,
         per_class_recall,
         per_class_f1,
+        log_loss,
+        per_class_auc,
+        macro_auc,
     }
 }
 
@@ -306,6 +320,94 @@ fn calculate_log_loss(prob_predictions: &ArrayView2<'_, f32>, true_labels: &Arra
     }
     
     log_loss / n as f64
+}
+
+/// Calculate multiclass log-loss (cross-entropy loss)
+fn calculate_multiclass_log_loss(prob_predictions: &ArrayView2<'_, f32>, true_labels: &ArrayView1<'_, f32>, num_classes: usize) -> f64 {
+    let n = prob_predictions.nrows();
+    if n == 0 || prob_predictions.ncols() != num_classes {
+        return 0.0;
+    }
+    
+    let mut log_loss = 0.0;
+    for i in 0..n {
+        let true_class = true_labels[i] as usize;
+        if true_class < num_classes {
+            let pred_prob = prob_predictions[[i, true_class]];
+            // Clamp probabilities to avoid log(0)
+            let clamped_prob = pred_prob.clamp(1e-15_f32, 1.0 - 1e-15_f32);
+            log_loss -= (clamped_prob as f64).ln();
+        }
+    }
+    
+    log_loss / n as f64
+}
+
+/// Calculate per-class AUC using one-vs-rest approach
+fn calculate_multiclass_auc(prob_predictions: &ArrayView2<'_, f32>, true_labels: &ArrayView1<'_, f32>, num_classes: usize) -> Vec<f64> {
+    let n = prob_predictions.nrows();
+    let mut per_class_auc = vec![0.5; num_classes]; // Default to random classifier
+    
+    if n == 0 || prob_predictions.ncols() != num_classes {
+        return per_class_auc;
+    }
+    
+    for class in 0..num_classes {
+        // Create binary labels: 1 if sample belongs to this class, 0 otherwise
+        let mut binary_labels = vec![0.0; n];
+        let mut class_probs = vec![0.0; n];
+        
+        for i in 0..n {
+            binary_labels[i] = if (true_labels[i] as usize) == class { 1.0 } else { 0.0 };
+            class_probs[i] = prob_predictions[[i, class]] as f64;
+        }
+        
+        // Calculate AUC for this class using binary classification approach
+        per_class_auc[class] = calculate_binary_auc(&class_probs, &binary_labels);
+    }
+    
+    per_class_auc
+}
+
+/// Calculate binary AUC-ROC using trapezoidal rule
+fn calculate_binary_auc(probabilities: &[f64], labels: &[f64]) -> f64 {
+    let n = probabilities.len();
+    if n == 0 {
+        return 0.5;
+    }
+    
+    // Create (probability, label) pairs and sort by probability descending
+    let mut pairs: Vec<(f64, f64)> = probabilities.iter().zip(labels.iter()).map(|(&p, &l)| (p, l)).collect();
+    pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    
+    let total_pos = labels.iter().sum::<f64>();
+    let total_neg = n as f64 - total_pos;
+    
+    if total_pos == 0.0 || total_neg == 0.0 {
+        return 0.5; // Random classifier when all samples are same class
+    }
+    
+    let mut tp = 0.0;
+    let mut fp = 0.0;
+    let mut auc = 0.0;
+    let mut prev_fpr = 0.0;
+    
+    for (_, label) in pairs {
+        if label > 0.5 {
+            tp += 1.0;
+        } else {
+            fp += 1.0;
+        }
+        
+        let tpr = tp / total_pos;
+        let fpr = fp / total_neg;
+        
+        // Trapezoidal rule: area = (fpr - prev_fpr) * tpr
+        auc += (fpr - prev_fpr) * tpr;
+        prev_fpr = fpr;
+    }
+    
+    auc
 }
 
 /// Calculate custom metrics
